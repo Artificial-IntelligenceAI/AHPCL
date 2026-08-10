@@ -37,48 +37,36 @@ Also pre-commits `.` away from any future `thing.field` member syntax.
 
 ## Comments — **DECIDED**
 
+Line-based, with an optional count. The `#[…]` block form was **scrapped** on 2026-08-10.
+
+| Form | Effect | Lines |
+|---|---|---|
+| `#` | This line | 1 |
+| `#3` | This line and the 2 below | 3 total |
+| `#+3` | This line and the 3 below | 4 total |
+
+A bare number is a **total** line count; `+N` counts **additional** lines beyond this one.
+
 ```
-#[I'm going to print a hello world here.].
+#3 this comment covers
+   these two
+   lines as well
 print["Hello, World!"].
 ```
 
-`#[` opens, `]` closes. May span multiple lines, so this is the block-comment form too.
+### Recorded assumptions — **INFERRED**
 
-The `.` is **not part of the comment** — it is the enclosing statement's terminator
-(**INFERRED**). That is why the following needs only one full stop:
+- A `#` marker on a line already inside a commented span is inert text, not a nested comment.
+- Blank lines count toward the total.
+- `#1` and `#+0` are legal, both meaning the same as bare `#`.
 
-```
-var:num 'x' = #[Yo, John. Do the variable for me.].
-```
+### Open
 
-### `]` inside a comment — **PROPOSED**
-
-Comments about code contain brackets constantly, and `]` would close the comment early:
-
-```
-#[remember to fix the a[0] case]. print["hi"].
-                        ↑ ends the comment here, leaving ` case]. ` as code
-```
-
-Proposed fix, both together: count brackets so nesting balances (handles `a[0]` with no
-effort), and allow `\]` as an escape since `\` is already the escape character.
-
-### A comment where a value belongs — **DECIDED**
-
-It is an **error**, reported with wording along the lines of *"placeholder not yet
-resolved"* — ideally quoting the comment's own text, so the note becomes the message.
-
-```
-var:num 'x' = #[Yo, John. Do the variable for me.].
-```
-```
-error: placeholder not yet resolved at line 4
-       "Yo, John. Do the variable for me."
-```
-
-**OPEN:** whether `task:check` tolerates these (type-checking around them so a half-written
-program can still be verified, with the Informer listing what is outstanding) while
-`task:build` refuses. Only the error itself was decided.
+- **Text beginning with a digit.** `#3 bugs remaining` silently comments two extra lines,
+  because `#` immediately followed by digits is a count. The rule is unambiguous to the
+  parser but hazardous to a person. `# 3 bugs remaining` (with a space) is a plain comment.
+- **Does `#-3` exist**, commenting *upward*? The `+` in `#+3` implies a counterpart.
+- **Overrunning the end of the file.** `#10` with four lines left — error, or clamp?
 
 ## Declarations — **DECIDED**
 
