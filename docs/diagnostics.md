@@ -70,3 +70,5 @@ Every one of these is a compile error, per
 - `deci` given a width that is not an IEEE decimal format (8-bit, 16-bit)
 - Overflow
 - A sign refinement the compiler cannot prove — *unless* layer 3 inserts a runtime check
+- A comment line-count running past the end of the file. Message **temporary**: *"What the
+  heck am I supposed to do?"* — rewrite once the template below is settled.

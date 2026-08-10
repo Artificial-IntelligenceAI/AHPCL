@@ -66,7 +66,7 @@ any string context?
 
 **10. Approve the `.`-versus-decimal-point rule** (PROPOSED in [syntax.md](syntax.md)).
 
-**11. Comment count overrunning the file** — `#10` with four lines left: error, or clamp?
+**11. Rewrite the temporary comment-overrun error message** once the Error Handler template exists — currently "What the heck am I supposed to do?"
 
 **13. Indexing syntax.** Discussion used `(a)[(i)]`, which clashes with `[…]` for calls.
 
