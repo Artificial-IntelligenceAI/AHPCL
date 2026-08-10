@@ -6,6 +6,7 @@ These record the language design as it is decided. Nothing here is implemented y
 |---|---|
 | [syntax.md](syntax.md) | Lexical rules and surface syntax |
 | [types.md](types.md) | The numeric type system, precision, refinements, verification |
+| [cli.md](cli.md) | The command line, which speaks the same syntax as the language |
 | [diagnostics.md](diagnostics.md) | The Error Handler and the Informer |
 | [toolchain.md](toolchain.md) | Implementation stack: Rust, LLVM, AOT + JIT |
 | [open-questions.md](open-questions.md) | **The running agenda.** Start here to resume. |
@@ -21,3 +22,9 @@ Claude's suggestions must never be recorded as though they were decisions.
 | **INFERRED** | Read off Tankun's own code examples, but never stated outright. Needs confirmation; may be a misreading. |
 | **PROPOSED** | Claude suggested it. Not accepted. Do not build on it. |
 | **OPEN** | Undecided. See [open-questions.md](open-questions.md). |
+
+## Conventions in these docs
+
+`<…>` marks a placeholder — "fill this in". It is a documentation convention only, not AHPCL
+syntax. (`|…|` was used briefly, then dropped: `||` is logical OR in most languages and would
+read ambiguously if AHPCL gains booleans.)

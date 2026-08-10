@@ -13,8 +13,10 @@ that **AHPCL needs no reserved-word list** — a variable can be called `'print'
 
 | Form | Meaning | Status |
 |---|---|---|
-| `#` | Comment, to end of line | **DECIDED** |
+| `#[…]` | Comment — block, may span lines | **DECIDED** |
+| `#` | Comment to end of line, when not followed by `[` | **INFERRED** |
 | `.` | Statement terminator (the role `;` plays elsewhere) | **DECIDED** |
+| `,` | Extends the current statement instead of ending it | **DECIDED** |
 | `\` | Escape character | **DECIDED** |
 | `'…'` | A name, or a literal value | **DECIDED** |
 | `"…"` | Text string; `\"` escapes a quote | **DECIDED** |
@@ -33,6 +35,51 @@ statement.**
 Consequences to accept if adopted: `.5` must be written `0.5`, and `3.` cannot mean `3.0`.
 Also pre-commits `.` away from any future `thing.field` member syntax.
 
+## Comments — **DECIDED**
+
+```
+#[I'm going to print a hello world here.].
+print["Hello, World!"].
+```
+
+`#[` opens, `]` closes. May span multiple lines, so this is the block-comment form too.
+
+The `.` is **not part of the comment** — it is the enclosing statement's terminator
+(**INFERRED**). That is why the following needs only one full stop:
+
+```
+var:num 'x' = #[Yo, John. Do the variable for me.].
+```
+
+### `]` inside a comment — **PROPOSED**
+
+Comments about code contain brackets constantly, and `]` would close the comment early:
+
+```
+#[remember to fix the a[0] case]. print["hi"].
+                        ↑ ends the comment here, leaving ` case]. ` as code
+```
+
+Proposed fix, both together: count brackets so nesting balances (handles `a[0]` with no
+effort), and allow `\]` as an escape since `\` is already the escape character.
+
+### A comment where a value belongs — **DECIDED**
+
+It is an **error**, reported with wording along the lines of *"placeholder not yet
+resolved"* — ideally quoting the comment's own text, so the note becomes the message.
+
+```
+var:num 'x' = #[Yo, John. Do the variable for me.].
+```
+```
+error: placeholder not yet resolved at line 4
+       "Yo, John. Do the variable for me."
+```
+
+**OPEN:** whether `task:check` tolerates these (type-checking around them so a half-written
+program can still be verified, with the Informer listing what is outstanding) while
+`task:build` refuses. Only the error itself was decided.
+
 ## Declarations — **DECIDED**
 
 ```
@@ -48,6 +95,24 @@ var:num 'x' [8 bit] = '20'.
 Quoting the value is **mandatory** outside `math { }`. `var:num 'x' = 1000.` is illegal.
 
 All variables are **mutable** (see [types.md](types.md)).
+
+### Extending with `,` — **DECIDED**
+
+`,` extends a statement; `.` ends it. One declaration can therefore introduce several
+variables, which are **separate variables of the same type**:
+
+```
+var:num 'x' = '1000', 'y' = '2000'.
+```
+
+The type comes from the shared header. Precision sits *after* each name, so each name carries
+its own precision slot (**INFERRED**):
+
+```
+var:int 'x' [32 bit] = '1000', 'y' [8 bit] = '20'.
+```
+
+This rule is language-wide, and the CLI uses the identical meaning — see [cli.md](cli.md).
 
 ## References vs grouping — **DECIDED**
 
