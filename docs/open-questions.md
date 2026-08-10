@@ -7,31 +7,22 @@ trade-offs first, then a single question.
 
 ---
 
-## The one with the longest reach
+## Arrays — model B chosen, details outstanding
 
-**1. The array model.** Answered `[no preference]`, discussed at length, still open. Whether
-maths works on whole collections at once. All three options still have arrays as *storage* —
-the question is whether they are values.
+**1a. Shapes — in the type system, or checked at runtime?** If sizes are part of the type,
+`vec[3] + vec[4]` is a *compile* error (the Futhark/Dex design, consistent with every other
+choice made so far) but the type checker must do arithmetic on sizes, and sizes read from
+files or input aren't knowable at compile time. If checked at runtime, it's far simpler and
+mismatches crash later.
 
-- **A — scalar only.** The language knows single numbers; you write every loop. C, Rust, Go.
-- **B — arrays are values.** `math { (a) + (b) x (c) }` operates on a million numbers. NumPy,
-  MATLAB, APL. Claude's recommendation: it makes the Unicode symbol plan meaningful, and it is
-  cheap if fusion is deferred.
-- **C — middle ground.** Looks like A; the compiler understands an array type well enough to
-  optimise later. Fortran 90+, Julia.
+**1b. Broadcasting** — does `math { (a) + 1 }` add 1 to every element? Convenient; also a
+famous source of shape bugs.
 
-Why it blocks things: it decides whether `·`, `×`, `⊙`, `⊗` are reserved as distinct operations
-(dot, cross, elementwise, tensor) or aliased to plain multiplication. Note `×` has *already*
-been decided as a multiplication alias, which spends it.
+**1c. Array type syntax and array literals.** `var:vec:num 'a' = …` appears in discussion, but
+`vec` is Claude's invention.
 
-Asymmetry worth knowing: A → B later is a middle-end rewrite; B → A is merely wasted effort.
-
-Two sub-questions if B:
-- **Shapes in the type system** (`vec[3] + vec[4]` is a compile error — the Futhark/Dex design,
-  consistent with every other choice made so far, but a serious step up in difficulty) or
-  **checked at runtime** (simpler, crashes later)?
-- **Broadcasting** — does `math { (a) + 1 }` add 1 to every element? Convenient; also a famous
-  source of shape bugs.
+**1d. What do plain `*` and `x` do to two arrays** — the same as `⊙`, or an error demanding
+the explicit symbol?
 
 ---
 
@@ -45,8 +36,9 @@ Informer output.
 
 ## Syntax
 
-**3. Which Unicode symbols are aliases.** "Probably every, idk". `×` confirmed. The safe list
-(`≤ ≥ ≠ ÷ √ π ∞ ≈ ∧ ∨ ¬ ∈ →`) versus the ones worth reserving — blocked on #1.
+**3. Which Unicode symbols are aliases.** "Probably every, idk". The safe list
+(`≤ ≥ ≠ ÷ √ π ∞ ≈ ∧ ∨ ¬ ∈ →`) is still unconfirmed; `· × ⊙ ⊗` are now reserved operations
+rather than aliases, and `∘` is unassigned.
 
 **4. LaTeX notation — which reading?** `\(2^{3}\)` could mean grouping braces on `^` (cheap,
 easy) or genuinely embedded LaTeX math mode (`\frac`, `\sum`, `\int` — a signature feature, and

@@ -190,6 +190,30 @@ This is what SPARK (avionics, rail), F\* (shipped TLS code), Dafny and Liquid Ha
 full version wants an SMT solver such as Z3. Purely additive — it composes on top of layers
 1–3 and breaks nothing. Not scheduled.
 
+## Arrays — **DECIDED: model B**
+
+**Arrays are first-class values**, and arithmetic works on whole collections at once — the
+NumPy / MATLAB / APL model, rather than writing loops over elements (C, Rust) or a
+compiler-blessed array type inside an otherwise scalar language (Fortran, Julia).
+
+```
+math { (a) + (b) ⊙ (c) }        # operates on every element
+math { (velocity) · (direction) }
+```
+
+This is what gives `·`, `×`, `⊙`, `⊗` real jobs — see [syntax.md](syntax.md).
+
+Fusion — collapsing `a + b ⊙ c` into a single pass over memory instead of three — is
+**explicitly deferred**. Correct first, fast later. Naive lowering is acceptable.
+
+Sign refinements extend elementwise: a vector of `+int` means every element is positive, so
+its sum and its dot product with another `+int` vector are both `+int`.
+
+**OPEN:** array type syntax and array literals. `var:vec:num 'a' = …` appears in discussion
+but `vec` is Claude's invention, not a decision.
+
+**OPEN:** shapes in the type system vs checked at runtime; broadcasting.
+
 ## Deferred types — **DECIDED to defer**
 
 - **`float`** — binary IEEE floating point. Absent so far. It is what makes numerical

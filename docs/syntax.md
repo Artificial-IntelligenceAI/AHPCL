@@ -151,9 +151,12 @@ inside math blocks, so elsewhere `x` is unambiguously just a name.
 
 | Operation | Spellings | Status |
 |---|---|---|
-| Multiply | `*`, `×`, `x` (spaced) | **DECIDED** |
+| Multiply | `*`, `x` (spaced) | **DECIDED** |
 | Power | `^`, `**`, `xx` | **DECIDED** |
 | Add / subtract | `+`, `-` | **DECIDED** (implied throughout) |
+
+`×` was briefly a multiplication alias and was **removed** on 2026-08-10 — it now means cross
+product, below.
 
 Multiple spellings per operation are intentional. The cost is on readers, not the compiler —
 a canonicalising formatter (`ahpcl fmt`) is the usual answer. **PROPOSED**, not scheduled.
@@ -168,19 +171,21 @@ Safe to alias — nothing else uses them:
 ≤  ≥  ≠  ÷  √  π  ∞  ≈  ∧  ∨  ¬  ∈  →
 ```
 
-**Worth reserving instead of aliasing**, because they are genuinely distinct operations in
-real mathematics — but only if arrays become first-class values:
+### Array operators — **DECIDED**
 
-| Symbol | Distinct meaning |
-|---|---|
-| `·` | dot product → a scalar |
-| `×` | cross product → a vector |
-| `⊙` | elementwise (Hadamard) product |
-| `⊗` | tensor / Kronecker product |
-| `∘` | function composition |
+Reserved as genuinely distinct operations, *not* aliases. On `[1, 2, 3]` and `[4, 5, 6]`:
 
-Note the conflict: `×` is already **DECIDED** as a multiplication alias, which spends it.
-Blocked on the array-model question in [open-questions.md](open-questions.md).
+| Symbol | Operation | Result |
+|---|---|---|
+| `⊙` | elementwise (Hadamard) product | `[4, 10, 18]` |
+| `·` | dot product | `32` |
+| `×` | cross product (3-element vectors only) | `[-3, 6, -3]` |
+| `⊗` | tensor / Kronecker product | `[4, 5, 6, 8, 10, 12, 12, 15, 18]` |
+
+`∘` (function composition) is still unassigned.
+
+**OPEN:** what plain `*` or `x` does to two arrays — the same as `⊙`, or an error demanding
+the explicit symbol?
 
 ### Lookalike characters — **PROPOSED**
 
