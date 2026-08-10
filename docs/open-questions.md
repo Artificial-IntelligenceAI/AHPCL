@@ -85,8 +85,7 @@ names not chosen.
 **17. Function parameter precision** — must it be stated explicitly, since range analysis cannot
 follow values across callers?
 
-**18. Does `task:check` tolerate unresolved placeholders?** The error itself is decided; whether
-`check` type-checks around them (so half-written programs verify) is not.
+*(Numbering has gaps where items were resolved or removed. Kept stable so references hold.)*
 
 ---
 
