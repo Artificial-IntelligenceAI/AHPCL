@@ -60,13 +60,22 @@ print["Hello, World!"].
 - Blank lines count toward the total.
 - `#1` and `#+0` are legal, both meaning the same as bare `#`.
 
+### Also decided
+
+- **There is no `#-3`.** Comments never count upward.
+- **`#` immediately followed by digits is always a count**, with no special case for prose.
+  `#3 bugs remaining` comments three lines, as the rule says. Write `# 3 bugs remaining` —
+  with a space — for a plain one-line comment. No warning, no mitigation: the space is the
+  programmer's responsibility.
+
 ### Open
 
-- **Text beginning with a digit.** `#3 bugs remaining` silently comments two extra lines,
-  because `#` immediately followed by digits is a count. The rule is unambiguous to the
-  parser but hazardous to a person. `# 3 bugs remaining` (with a space) is a plain comment.
-- **Does `#-3` exist**, commenting *upward*? The `+` in `#+3` implies a counterpart.
 - **Overrunning the end of the file.** `#10` with four lines left — error, or clamp?
+
+### Placeholders — **removed**
+
+There is no placeholder syntax. The *"placeholder not yet resolved"* error was dropped on
+2026-08-10 along with the `#[…]` comment form it depended on.
 
 ## Declarations — **DECIDED**
 

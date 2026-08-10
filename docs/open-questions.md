@@ -66,14 +66,7 @@ any string context?
 
 **10. Approve the `.`-versus-decimal-point rule** (PROPOSED in [syntax.md](syntax.md)).
 
-**11. How is a placeholder written now?** The `#[…]` block comment was scrapped, which orphans
-the *"placeholder not yet resolved"* error — a line comment runs to end of line, so
-`var:num 'x' = # do this.` can never reach its `.` terminator. The error is decided; the
-syntax that triggers it no longer exists.
-
-**12. Comment counting details** — see [syntax.md](syntax.md): text beginning with a digit
-(`#3 bugs remaining` silently eats two lines), whether `#-3` comments upward, and what happens
-when a count overruns the end of the file.
+**11. Comment count overrunning the file** — `#10` with four lines left: error, or clamp?
 
 **13. Indexing syntax.** Discussion used `(a)[(i)]`, which clashes with `[…]` for calls.
 
