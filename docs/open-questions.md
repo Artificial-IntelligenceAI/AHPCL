@@ -18,8 +18,12 @@ mismatches crash later.
 **1b. Broadcasting** — does `math { (a) + 1 }` add 1 to every element? Convenient; also a
 famous source of shape bugs.
 
-**1c. Array type syntax and array literals.** `var:vec:num 'a' = …` appears in discussion, but
-`vec` is Claude's invention.
+**1c. Array type syntax, type names, and array literals.** `var:vec:num 'a' = …` appears in
+discussion, but `vec` is Claude's invention — and "vector" is ambiguous, since C++ and Rust use
+it to mean "growable array" with no geometric meaning.
+
+**1e. Which symbol does matrix multiplication get?** It is distinct from `⊙` elementwise and
+from `·` dot. Common choices elsewhere are `@` (Python), `*` (MATLAB), and `·`.
 
 **1d. What do plain `*` and `x` do to two arrays** — the same as `⊙`, or an error demanding
 the explicit symbol?

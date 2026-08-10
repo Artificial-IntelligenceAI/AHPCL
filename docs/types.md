@@ -203,6 +203,34 @@ math { (velocity) · (direction) }
 
 This is what gives `·`, `×`, `⊙`, `⊗` real jobs — see [syntax.md](syntax.md).
 
+### Dimensionality — **DECIDED**
+
+**N-dimensional arrays underneath, with 1-D and 2-D as named cases.** Julia's approach: one
+general array type, with the common shapes given their own names and their own operators.
+
+| Shape | Name | Carries |
+|---|---|---|
+| 0-D | scalar | ordinary arithmetic |
+| 1-D | vector | `·` dot, `×` cross (3 elements only), `⊙` elementwise |
+| 2-D | matrix | matrix multiplication |
+| N-D | tensor | the general case |
+
+"Array" is the storage word; vector/matrix/tensor describe shape and mathematical role.
+
+Operators are therefore **shape-dependent**: `·` requires 1-D, `×` requires two 3-element
+vectors, matrix multiplication requires 2-D operands whose inner dimensions agree.
+
+**Matrix multiplication is not elementwise** and must be a distinct operation — the classic
+NumPy hazard:
+
+```
+[[1,2],[3,4]] matmul [[5,6],[7,8]]  =  [[19,22],[43,50]]
+[[1,2],[3,4]]    ⊙   [[5,6],[7,8]]  =  [[5,12],[21,32]]
+```
+
+**OPEN:** which symbol matrix multiplication gets, and the type names — `vec` was Claude's
+invention, and "vector" is ambiguous because C++ and Rust use it to mean "growable array".
+
 Fusion — collapsing `a + b ⊙ c` into a single pass over memory instead of three — is
 **explicitly deferred**. Correct first, fast later. Naive lowering is acceptable.
 
