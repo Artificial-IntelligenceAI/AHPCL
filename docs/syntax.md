@@ -218,9 +218,32 @@ with MATLAB, Julia, Fortran and R, rather than with C-family languages.
 Selection results have statically computable shapes, which fits shapes-in-types: selecting 3
 elements from a `vector [10]` yields a `vector [3]`.
 
-**OPEN:** ranges (selecting elements 1 through 100 without listing them); how selection
-addresses a matrix or higher-rank array; whether this doubles as the general indexing syntax,
-which would resolve the `(a)[(i)]` clash with call brackets.
+### Higher ranks — **DECIDED**
+
+One selector per dimension, **chained**:
+
+```
+math { (m):1, 3;:2, 4; }      # rows 1 and 3, then columns 2 and 4
+math { (m):all;:2; }          # every row, column 2 only
+math { (t):1;:2;:3; }         # scales to any rank
+```
+
+A selector with fewer dimensions than the rank means "all of the rest". Whitespace is free, so
+`(m):1, 3; :2, 4;` is the same thing and easier to read.
+
+Each `:…;` is one self-contained operation applied to the previous result — select rows, then
+select columns from *that* — so chaining composes rather than being one atomic multi-axis index.
+
+Rejected: a single selector with an internal separator, `(m):1, 3 | 2, 4;`. It reads better,
+but **spending `|` would foreclose `|x|` for absolute value** — and the two genuinely cannot
+coexist, since `|a|b|c|` is ambiguous. A forgotten separator is also silent there:
+`(m):1, 3, 2, 4;` is legal on a `[4, 4]` matrix and simply wrong.
+
+Also rejected: dropping the repeated `:` (`(m):1, 3; 2, 4;`). Indices can be variables, so after
+a `;` the parser cannot tell whether `(b)` opens another dimension or is the next operand.
+
+**OPEN:** ranges (selecting elements 1 through 100 without listing them); whether this doubles
+as the general indexing syntax, which would resolve the `(a)[(i)]` clash with call brackets.
 
 **DECIDED:** a *bare* array reference in arithmetic sums its elements — see
 [types.md](types.md). `:all;` is what makes an operation position-by-position.

@@ -20,8 +20,9 @@ is unambiguously `[2, 2]`, and precision already works this way. Also: how is an
 
 **1h. Confirm the element-type order** — `matrix:num` was assumed, never stated.
 
-**1i. Selector details** — ranges instead of listing indices; how selection addresses a matrix
-or higher rank; whether selectors double as general indexing (which would settle #13).
+**1i. Selector ranges** — selecting elements 1 through 100 without listing them. Note `..` is
+unavailable: `1..100` breaks the decimal-point rule. Also whether selectors double as general
+indexing (which would settle #13), and whether a step/stride is expressible.
 
 **1d. Resolved by the summing rule** — `math { (a) x (b) }` is sum(a) × sum(b), and
 `math { (a):all; x (b):all; }` is elementwise, identical to `⊙`.
