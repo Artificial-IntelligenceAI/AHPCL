@@ -174,8 +174,12 @@ Two facts this rests on: a compile-time interpreter runs perhaps 100–1000× sl
 compiled code, so a loop taking 1 second at runtime can take ~10 minutes to evaluate; and
 progress output must be rate-limited (~250 ms) or printing costs more than the evaluation.
 
-**OPEN — in flight:** what happens where no human is watching (CI, editors running `check`
-on every keystroke, piped output). An unbounded loop there hangs with nobody to intervene.
+**Where no human is watching** (CI, editors running `check` on every keystroke, piped output),
+behaviour is **set by the caller**, not sniffed from the environment — via
+`flag:loop-evaluation = limit` on the command line. See [cli.md](cli.md).
+
+**OPEN:** the default when the caller says nothing, and whether it varies per task
+(`build` unbounded vs `check` limited).
 
 ### Layer 4: `invariant` clauses — **PROPOSED, roadmap**
 
