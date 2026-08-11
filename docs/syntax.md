@@ -193,7 +193,8 @@ elements from a `vector [10]` yields a `vector [3]`.
 addresses a matrix or higher-rank array; whether this doubles as the general indexing syntax,
 which would resolve the `(a)[(i)]` clash with call brackets.
 
-**OPEN — blocking:** what a *bare* array reference means in arithmetic. See below.
+**DECIDED:** a *bare* array reference in arithmetic sums its elements — see
+[types.md](types.md). `:all;` is what makes an operation position-by-position.
 
 ### Array operators — **DECIDED**
 

@@ -19,11 +19,9 @@ a pure synonym for `[?, ?]`?
 
 **1h. Confirm the element-type order** — `matrix:num` was assumed, never stated.
 
-**1b. BLOCKING — what does a bare array reference mean in arithmetic?** Scalar-only
-broadcasting was chosen, then refined: `math { (a) + 1 }` **sums** every element of `a` and
-adds 1, while `math { (a):all; + 1 }` adds 1 elementwise. Unresolved: whether `math { (a) + (b) }`
-with two arrays is elementwise, or the sum of each. The second reading would revise the
-model-B example already approved, where `math { (a) + (b) ⊙ (c) }` operates on whole arrays.
+**1b. Do the array operators need `:all;` too?** A bare reference sums, but `· × ⊙ ⊗` and
+matrix multiplication have no meaningful scalar reading — so either they implicitly operate on
+all elements, or `(a):all; · (b):all;` is required.
 
 **1i. Selector details** — ranges instead of listing indices; how selection addresses a matrix
 or higher rank; whether selectors double as general indexing (which would settle #13).

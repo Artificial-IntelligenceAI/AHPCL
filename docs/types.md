@@ -196,10 +196,23 @@ full version wants an SMT solver such as Z3. Purely additive — it composes on 
 NumPy / MATLAB / APL model, rather than writing loops over elements (C, Rust) or a
 compiler-blessed array type inside an otherwise scalar language (Fortran, Julia).
 
+### Bare references reduce — **DECIDED**
+
+A bare array reference in arithmetic **sums its elements**. Operating position-by-position
+requires an explicit `:all;` selector (see [syntax.md](syntax.md)):
+
 ```
-math { (a) + (b) ⊙ (c) }        # operates on every element
-math { (velocity) · (direction) }
+math { (a) + (b) }              # sum(a) + sum(b) — a single number
+math { (a):all; + (b):all; }    # elementwise: matching positions added
+math { (a) + 1 }                # sum(a) + 1
+math { (a):all; + 1 }           # 1 added to every element
 ```
+
+This is a uniform rule with no exceptions — a bare array is always its sum. It supersedes
+earlier wording in this file that showed `math { (a) + (b) ⊙ (c) }` acting on whole arrays;
+under the rule as decided, that expression sums.
+
+Broadcasting is therefore **scalar-only, and only under `:all;`**.
 
 This is what gives `·`, `×`, `⊙`, `⊗` real jobs — see [syntax.md](syntax.md).
 
