@@ -362,6 +362,34 @@ narrowing chain the same way `var:num` does (**INFERRED**: the order was assumed
 
 **OPEN:** whether `tensor` is legal at rank 1 or 2, or strictly rank 3 and above.
 
+## Text — **DECIDED**
+
+`str` holds a single piece of text; `nna` ("non-numerical-array") holds many.
+
+```
+var:str 'name'  = "Alice".
+var:nna 'names' = {"hello", "John Doe", "Lol😂", "8473ijldkm"}.
+```
+
+Non-numeric arrays deliberately do **not** reuse `vector` / `matrix` / `tensor`. A 2-D grid of
+text is a real and common structure (a spreadsheet, a CSV, a game board), but it is not a
+*matrix* — matrix operations need elements you can add and multiply with inverses, which text
+has none of. The cost accepted here is two naming schemes for identical shapes.
+
+Shapes may be **omitted when a literal determines them** — `{"a", "b"}` is unambiguously 2
+elements, the same "infer when knowable" rule already used for precision.
+
+Text is an **opaque scalar**, not a vector of characters. It has to be: `{"Alice", "Bob"}` as
+char vectors would be rows of length 5 and 3 — *ragged* — and the shape system assumes
+rectangles.
+
+Precision (`[n bit]`) and sign prefixes (`+`/`-`) are numeric-only, so the type grammar must
+allow types that take neither.
+
+**OPEN:** what else `nna` may hold besides text (booleans? dates?), whether one `nna` may mix
+kinds, whether `nna` has a rank at all, and whether the summing rule makes bare `(names)`
+concatenate.
+
 ## Deferred types — **DECIDED to defer**
 
 - **`float`** — binary IEEE floating point. Absent so far. It is what makes numerical

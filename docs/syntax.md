@@ -320,7 +320,13 @@ error: unexpected character '−' (U+2212 MINUS SIGN)
 
 ## Identifiers — **DECIDED**
 
-Unicode names are allowed: `'Δx'`, `'ความเร็ว'`, `'θ'`.
+Names may contain **anything** — Unicode, emoji, spaces, special characters, and the
+delimiters themselves via `\`:
+
+```
+'Δx'        'ความเร็ว'       'θ'
+'Lol😂'      'my variable'   'it\'s'
+```
 
 Because names are quoted, they are unconstrained — `'2x'` (leading digit) is legal, and so
 are names that shadow operators or keywords.
