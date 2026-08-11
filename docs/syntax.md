@@ -199,7 +199,17 @@ which would resolve the `(a)[(i)]` clash with call brackets.
 
 ### Array operators — **DECIDED**
 
-Reserved as genuinely distinct operations, *not* aliases. On `[1, 2, 3]` and `[4, 5, 6]`:
+Reserved as genuinely distinct operations, *not* aliases. These **imply `:all;`** — a bare
+reference stays an array in their presence, rather than summing:
+
+```
+math { (velocity) · (direction) }      # dot product, no selector needed
+```
+
+The reason: `·`, `×`, `⊙`, `⊗` have no scalar meaning at all, so the summing rule could only
+ever produce nonsense. It exists to disambiguate `+ - * x`, which genuinely do work on both.
+
+On `[1, 2, 3]` and `[4, 5, 6]`:
 
 | Symbol | Operation | Result |
 |---|---|---|

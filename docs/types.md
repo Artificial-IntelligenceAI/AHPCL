@@ -208,7 +208,13 @@ math { (a) + 1 }                # sum(a) + 1
 math { (a):all; + 1 }           # 1 added to every element
 ```
 
-This is a uniform rule with no exceptions — a bare array is always its sum. It supersedes
+The **one exception** is the array operators `·`, `×`, `⊙`, `⊗`, which imply `:all;` — see
+[syntax.md](syntax.md).
+
+A redundancy worth knowing: `math { (a):all; x (b):all; }` and `math { (a) ⊙ (b) }` are the
+same operation, spelled two ways.
+
+It supersedes
 earlier wording in this file that showed `math { (a) + (b) ⊙ (c) }` acting on whole arrays;
 under the rule as decided, that expression sums.
 

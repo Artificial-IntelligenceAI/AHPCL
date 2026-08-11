@@ -19,18 +19,14 @@ a pure synonym for `[?, ?]`?
 
 **1h. Confirm the element-type order** — `matrix:num` was assumed, never stated.
 
-**1b. Do the array operators need `:all;` too?** A bare reference sums, but `· × ⊙ ⊗` and
-matrix multiplication have no meaningful scalar reading — so either they implicitly operate on
-all elements, or `(a):all; · (b):all;` is required.
-
 **1i. Selector details** — ranges instead of listing indices; how selection addresses a matrix
 or higher rank; whether selectors double as general indexing (which would settle #13).
 
 **1e. Which symbol does matrix multiplication get?** It is distinct from `⊙` elementwise and
 from `·` dot. Common choices elsewhere are `@` (Python), `*` (MATLAB), and `·`.
 
-**1d. What do plain `*` and `x` do to two arrays** — the same as `⊙`, or an error demanding
-the explicit symbol?
+**1d. Resolved by the summing rule** — `math { (a) x (b) }` is sum(a) × sum(b), and
+`math { (a):all; x (b):all; }` is elementwise, identical to `⊙`.
 
 ---
 
