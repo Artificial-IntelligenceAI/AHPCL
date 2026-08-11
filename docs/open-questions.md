@@ -9,11 +9,13 @@ trade-offs first, then a single question.
 
 ## Arrays — model B chosen, details outstanding
 
-**1a. Shapes — in the type system, or checked at runtime?** If sizes are part of the type,
-`vec[3] + vec[4]` is a *compile* error (the Futhark/Dex design, consistent with every other
-choice made so far) but the type checker must do arithmetic on sizes, and sizes read from
-files or input aren't knowable at compile time. If checked at runtime, it's far simpler and
-mismatches crash later.
+**1a. How is an unknown shape written?** Shapes are in the type when knowable (decided); the
+opt-out spelling is not. A separate type name (`dynmatrix`), question marks in the shape
+(`[?, 3]` — which also allows *partial* shapes, e.g. known columns and unknown rows), or both.
+
+**1f. Where does the shape go in a declaration**, given precision already uses `[…]`? Two
+bracket groups (`'m' [3, 4] [32 bit]`), shape attached to the type (`matrix[3, 4]:num`), or
+combined.
 
 **1b. Broadcasting** — does `math { (a) + 1 }` add 1 to every element? Convenient; also a
 famous source of shape bugs.

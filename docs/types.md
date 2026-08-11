@@ -240,7 +240,40 @@ its sum and its dot product with another `+int` vector are both `+int`.
 **OPEN:** array type syntax and array literals. `var:vec:num 'a' = …` appears in discussion
 but `vec` is Claude's invention, not a decision.
 
-**OPEN:** shapes in the type system vs checked at runtime; broadcasting.
+### Shapes — **DECIDED**
+
+**Shapes live in the type when knowable, with an explicit opt-out when not** — the same rule
+already used for precision, where `infnum` is the "I am not bounding this" marker.
+
+```
+var:matrix:num 'a' [3, 4] = …
+var:matrix:num 'b' [4, 5] = …
+var:matrix:num 'c' = math { (a) matmul (b) }.    # inferred [3, 5]
+```
+
+Mismatches are **compile** errors, before the program runs:
+
+```
+error: shape mismatch — [3, 4] matmul [5, 2]
+       inner dimensions must agree: 4 ≠ 5
+```
+
+This is the main prize: dimension mismatch is the most common bug in numerical code, and in
+most languages it surfaces as a crash partway through a run.
+
+Shapes are written `[3, 4]`, **not** `[3 x 4]` — `x` is the multiplication operator, so
+`3 x 4` would evaluate to 12. Comma already means "extend", which suits a dimension list:
+`[3]` is 1-D, `[3, 4]` 2-D, `[3, 4, 5]` 3-D. (**PROPOSED** notation.)
+
+**Size-polymorphic functions** — one function accepting any size, via size variables such as
+`[R, C]` — are **deferred**. Option 3 exists precisely so this isn't a prerequisite; it can be
+added later, since a size-polymorphic signature is strictly more precise than an unshaped one.
+
+**OPEN:** how an unknown shape is written; whether partial shapes (known columns, unknown
+rows) are expressible; broadcasting.
+
+**OPEN:** precision already claims the bracket slot (`[8 bit]`), so an array declaration needs
+both — `[3, 4] [32 bit]`, shape attached to the type, or something combined.
 
 ## Deferred types — **DECIDED to defer**
 
