@@ -472,7 +472,37 @@ rules would be a real value that range analysis has to account for.
 (`var:num 'y' = '1', 'z' = '2'.`) and extending an if/else *chain*. The keyword `else`
 distinguishes them, so it parses; it is still two jobs for one mark.
 
-**OPEN — blocking:** what a block `{ … }` evaluates to.
+### Block values — **DECIDED**
+
+A block's value is marked **explicitly**, with `handback` or its short form `hb`. Both spellings
+are legal.
+
+```
+var:num 'abs' = if math { ('x') < 0 } {
+    print["it was negative"].
+    handback math { -('x') }.
+}, else {
+    hb ('x').
+}.
+```
+
+`handback` hands a value out of the block; it is **not** an assignment. Where the value goes
+depends on where the conditional sits:
+
+```
+var:num 'abs' = if … { hb … }, else { hb … }.   # stored in 'abs'
+print[if … { hb … }, else { hb … }].            # goes to print
+if … { hb … }.                                   # produced, then discarded
+```
+
+Rejected: taking the **last statement** implicitly (Rust-style). It is silent — reordering two
+lines would change a block's meaning, and a block that produced nothing would surface as a
+confusing type error elsewhere rather than "this branch never hands back a value".
+
+`return` was avoided deliberately: it conventionally means "exit the enclosing function", and
+reusing it here would make it ambiguous once functions exist.
+
+**OPEN:** unary minus. `-('x')` as *negation* rather than subtraction has never been decided.
 
 ## Not yet designed
 
