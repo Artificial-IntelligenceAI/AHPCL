@@ -170,6 +170,16 @@ inside math blocks, so elsewhere `x` is unambiguously just a name.
 `×` was briefly a multiplication alias and was **removed** on 2026-08-10 — it now means cross
 product, below.
 
+### `x` requires whitespace — **DECIDED**
+
+`x` is multiplication **only with a space on each side**. `2 x 4` is arithmetic; `2x4` is not.
+
+The rule originally existed to tell the bare reference `(2x)` from the expression
+`((x) x 20)`. Quoted references removed that job, and the rule was kept anyway: requiring
+spaces around a *letter* used as an operator is what makes it readable, and it stays consistent
+with rejecting juxtaposition for matrix multiplication. Implicit multiplication (`2x` meaning
+2 × x) was rejected for the same reason — a missing operator must never become valid code.
+
 Multiple spellings per operation are intentional. The cost is on readers, not the compiler —
 a canonicalising formatter (`ahpcl fmt`) is the usual answer. **PROPOSED**, not scheduled.
 
