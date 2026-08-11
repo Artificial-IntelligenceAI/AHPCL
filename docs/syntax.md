@@ -218,6 +218,24 @@ On `[1, 2, 3]` and `[4, 5, 6]`:
 | `×` | cross product (3-element vectors only) | `[-3, 6, -3]` |
 | `⊗` | tensor / Kronecker product | `[4, 5, 6, 8, 10, 12, 12, 15, 18]` |
 
+**`·` also means matrix multiplication** — not a collision but a unification. The dot product
+*is* matrix multiplication: treat `a` as a 1×3 row and `b` as a 3×1 column, multiply as
+matrices, and the result is exactly `a₁b₁ + a₂b₂ + a₃b₃`. One operation; the vector case is a
+special shape of it. Shapes are in the type system, so the compiler always knows which case it
+is looking at.
+
+```
+math { (velocity) · (direction) }    # two vectors → a number
+math { (a) · (b) }                   # [3, 4] · [4, 5] → [3, 5]
+```
+
+Real-world notation usually writes matrix products by juxtaposition (`AB`). That was rejected
+deliberately: an invisible operator means a forgotten operator becomes valid code, which is the
+one mistake the compiler could never catch. `·` is standard for dot product regardless.
+
+Because `*` and `x` stay scalar-only under the summing rule, AHPCL avoids MATLAB's confusion
+where `*` is matrix multiply and `.*` is elementwise.
+
 `∘` (function composition) is still unassigned.
 
 **OPEN:** what plain `*` or `x` does to two arrays — the same as `⊙`, or an error demanding

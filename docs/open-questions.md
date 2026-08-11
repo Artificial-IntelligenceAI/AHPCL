@@ -22,9 +22,6 @@ a pure synonym for `[?, ?]`?
 **1i. Selector details** — ranges instead of listing indices; how selection addresses a matrix
 or higher rank; whether selectors double as general indexing (which would settle #13).
 
-**1e. Which symbol does matrix multiplication get?** It is distinct from `⊙` elementwise and
-from `·` dot. Common choices elsewhere are `@` (Python), `*` (MATLAB), and `·`.
-
 **1d. Resolved by the summing rule** — `math { (a) x (b) }` is sum(a) × sum(b), and
 `math { (a):all; x (b):all; }` is elementwise, identical to `⊙`.
 
