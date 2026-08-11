@@ -432,8 +432,28 @@ if math { ('x') > 5 } {
 Rejected: `if[…]` (condition as a bracketed argument, matching `print[…]`) and `if:…` (colon
 style, matching `var:num`).
 
-**OPEN:** how `else` and else-if attach; whether a conditional is a statement or an expression
-producing a value (the latter would allow `var:num 'y' = if … { … }`).
+### else — **DECIDED**
+
+Chained with `,`, because a whole if/else chain is **one statement**:
+
+```
+if math { ('x') > 5 } {
+    print["big"].
+}, else if math { ('x') > 3 } {
+    print["medium"].
+}, else {
+    print["small"].
+}.
+```
+
+The single `.` at the end follows from the rule rather than being a thing to remember —
+`,` extends, `.` ends, exactly as in declarations and on the command line.
+
+Rejected: bare chaining (`} else if`), which works but would be the one place a statement
+continues without a comma; and an `elif`/`elseif` shorthand, a third keyword for something two
+existing words already say.
+
+**OPEN:** whether a conditional is a statement or an expression producing a value.
 
 ## Not yet designed
 
