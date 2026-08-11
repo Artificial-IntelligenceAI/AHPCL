@@ -20,7 +20,7 @@ that **AHPCL needs no reserved-word list** — a variable can be called `'print'
 | `\` | Escape character | **DECIDED** |
 | `'…'` | A name, or a literal value | **DECIDED** |
 | `"…"` | Text string; `\"` escapes a quote | **DECIDED** |
-| `(name)` | Reference the variable called *name* | **DECIDED** |
+| `('name')` | Reference the variable called *name* — quotes always | **DECIDED** |
 | `(expr)` | Group a subexpression | **DECIDED** |
 | `[…]` | Call arguments | **DECIDED** for `print`; **OPEN** whether all calls |
 | `math { … }` | Arithmetic block | **DECIDED** |
@@ -37,7 +37,7 @@ block — everywhere else numbers are quoted (`'1000'`) or necessarily whole:
 ```
 [3, 4]        shape — integers
 [32 bit]      precision — integer
-(a):1, 3;     selector — integers
+('a'):1, 3;   selector — integers
 #3            comment count — integer
 ```
 
@@ -124,34 +124,35 @@ This rule is language-wide, and the CLI uses the identical meaning — see [cli.
 
 ## References vs grouping — **DECIDED**
 
-`( )` does double duty, and one whitespace rule keeps it unambiguous:
+**Every reference is quoted. There is no bare form.** The quotes separate reference from
+grouping completely:
 
 ```
-(2x)                       # a single unbroken token → the variable named 2x
-((x) x 20)                 # contains a spaced operator → a grouped expression
-math { 87 x ((x) x 20) }
+('x')                      # the variable named x
+(3 + 4)                    # a grouped subexpression
+math { 87 x (('x') x 20) }
 ```
 
-### The whitespace rule — **INFERRED**
+This replaced an earlier bare form (`(x)`, `(2x)`) on 2026-08-11. The bare form needed a
+whitespace rule to tell a name from an expression, and forced quoting anyway for names
+containing spaces, brackets or the statement terminator. Requiring quotes everywhere removes
+the ambiguity entirely and makes `('.')`, `('my variable')` and `('😂')` ordinary rather than
+special cases.
 
-`x` is multiplication **only with whitespace on both sides**. `2x` is one name; `2 x 4` is
-arithmetic. This is what makes `(2x)` and `((x) x 20)` coexist. Raku uses the same trick for
-its own `x` operator.
-
-Read off Tankun's examples; never stated outright. **Confirm before building the lexer** —
-everything about `( )` depends on it.
+The cost, accepted deliberately, is verbosity — `(('x') x 20)` where `((x) x 20)` would have
+done.
 
 ## Math blocks — **DECIDED**
 
 Inside `math { }`, numbers are written bare (no quotes):
 
 ```
-var:num '2x' = math { 10 x (x) }.
-var:num 'y'  = math { 1 + 2 x 4 × 10 }.
-var:num 'z'  = math { 87 x ((x) x 20) }.
+var:num '2x' = math { 10 x ('x') }.
+var:num 'y'  = math { 1 + 2 x 4 }.
+var:num 'z'  = math { 87 x (('x') x 20) }.
 ```
 
-Variables must still be referenced with `( )`. `math { 10 x x }` is wrong; the second `x`
+Variables must be referenced with `('…')`. `math { 10 x x }` is wrong; the second `x`
 is another multiplication sign, not the variable.
 
 **OPEN:** is `math { }` required for *all* arithmetic, or only when the extended symbol set
@@ -215,8 +216,8 @@ declarations, forcing the parser to peek for an `=`).
 A reference may carry a selector, introduced by `:` and closed by `;`:
 
 ```
-math { (a):all; + 1 }          # add 1 to every element → an array
-math { (a):1, 3, 9; + 1 }      # only the 1st, 3rd and 9th elements
+math { ('a'):all; + 1 }        # add 1 to every element → an array
+math { ('a'):1, 3, 9; + 1 }    # only the 1st, 3rd and 9th elements
 ```
 
 `;` is needed because the selector list uses `,`, which otherwise means "extend" — so the
@@ -233,41 +234,41 @@ elements from a `vector [10]` yields a `vector [3]`.
 One selector per dimension, **chained**:
 
 ```
-math { (m):1, 3;:2, 4; }      # rows 1 and 3, then columns 2 and 4
-math { (m):all;:2; }          # every row, column 2 only
-math { (t):1;:2;:3; }         # scales to any rank
+math { ('m'):1, 3;:2, 4; }    # rows 1 and 3, then columns 2 and 4
+math { ('m'):all;:2; }        # every row, column 2 only
+math { ('t'):1;:2;:3; }       # scales to any rank
 ```
 
 A selector with fewer dimensions than the rank means "all of the rest". Whitespace is free, so
-`(m):1, 3; :2, 4;` is the same thing and easier to read.
+`('m'):1, 3; :2, 4;` is the same thing and easier to read.
 
 Each `:…;` is one self-contained operation applied to the previous result — select rows, then
 select columns from *that* — so chaining composes rather than being one atomic multi-axis index.
 
-Rejected: a single selector with an internal separator, `(m):1, 3 | 2, 4;`. It reads better,
+Rejected: a single selector with an internal separator, `('m'):1, 3 | 2, 4;`. It reads better,
 but **spending `|` would foreclose `|x|` for absolute value** — and the two genuinely cannot
 coexist, since `|a|b|c|` is ambiguous. A forgotten separator is also silent there:
-`(m):1, 3, 2, 4;` is legal on a `[4, 4]` matrix and simply wrong.
+`('m'):1, 3, 2, 4;` is legal on a `[4, 4]` matrix and simply wrong.
 
-Also rejected: dropping the repeated `:` (`(m):1, 3; 2, 4;`). Indices can be variables, so after
-a `;` the parser cannot tell whether `(b)` opens another dimension or is the next operand.
+Also rejected: dropping the repeated `:` (`('m'):1, 3; 2, 4;`). Indices can be variables, so after
+a `;` the parser cannot tell whether `('b')` opens another dimension or is the next operand.
 
 ### Ranges — **DECIDED**
 
 ```
-math { (a):1 to 100; }
-math { (a):1 to 100 by 2; }      # with a step
+math { ('a'):1 to 100; }
+math { ('a'):1 to 100 by 2; }    # with a step
 ```
 
 `..` was **unavailable**: `1..100` breaks the decimal-point rule, since a `.` not followed by a
 digit terminates the statement.
 
 Keywords cost nothing here — because names are quoted, a variable called `'to'` is written
-`(to)`, so bare `to` can never collide with it. AHPCL can add keywords freely in a way most
+`('to')`, so bare `to` can never collide with it. AHPCL can add keywords freely in a way most
 languages cannot.
 
 **OPEN:** whether selectors double as the general indexing syntax, which would resolve the
-`(a)[(i)]` clash with call brackets.
+`('a')[('i')]` clash with call brackets.
 
 **DECIDED:** a *bare* array reference in arithmetic sums its elements — see
 [types.md](types.md). `:all;` is what makes an operation position-by-position.
@@ -278,7 +279,7 @@ Reserved as genuinely distinct operations, *not* aliases. These **imply `:all;`*
 reference stays an array in their presence, rather than summing:
 
 ```
-math { (velocity) · (direction) }      # dot product, no selector needed
+math { ('velocity') · ('direction') }      # dot product, no selector needed
 ```
 
 The reason: `·`, `×`, `⊙`, `⊗` have no scalar meaning at all, so the summing rule could only
@@ -300,8 +301,8 @@ special shape of it. Shapes are in the type system, so the compiler always knows
 is looking at.
 
 ```
-math { (velocity) · (direction) }    # two vectors → a number
-math { (a) · (b) }                   # [3, 4] · [4, 5] → [3, 5]
+math { ('velocity') · ('direction') }    # two vectors → a number
+math { ('a') · ('b') }                   # [3, 4] · [4, 5] → [3, 5]
 ```
 
 Real-world notation usually writes matrix products by juxtaposition (`AB`). That was rejected
@@ -346,22 +347,21 @@ are names that shadow operators or keywords.
 Inside `'…'`, **only `'` and `\` need escaping**. Emoji, spaces, dots, punctuation and every
 other character are literal. Same inside `"…"` for `"` and `\`.
 
-### Referencing awkward names — **DECIDED**
+### Referencing names — **DECIDED**
 
-Bare when the name is a clean single token; quoted when it is not:
+Always quoted:
 
 ```
-print[(name)].            # ordinary name
-print[(😂)].              # emoji is fine bare
-print[('my variable')].   # contains a space
-print[('.')].             # contains the statement terminator
+print[('name')].
+print[('😂')].
+print[('my variable')].
+print[('.')].
 ```
 
-That last case is forced, not stylistic: a variable named `.` cannot be referenced bare,
-because `(.)` lexes as an open paren, an end-of-statement, and a stray close paren.
+No name is a special case — spaces, emoji and the statement terminator all work identically,
+because the quotes do the delimiting.
 
-**PROPOSED:** follow UAX #31 for which characters may appear in *unquoted* references, and warn
-on confusable pairs such as Cyrillic `А` vs Latin `A`.
+**PROPOSED:** warn on confusable pairs such as Cyrillic `А` vs Latin `A`.
 
 **OPEN:** the escape list beyond `\'`, `\"`, `\\` — `\n` for a newline, and a codepoint form
 such as `\u{1F602}` (which would also let lookalike characters be written explicitly rather
@@ -370,14 +370,14 @@ than pasted and hoped for).
 ## Output — **DECIDED**
 
 ```
-print[(x)].
-print["The variable \"x\" is " (x) " and that is that."].
+print[('x')].
+print["The variable \"x\" is " ('x') " and that is that."].
 ```
 
 Items inside `print[…]` are **space-separated, no commas**.
 
 **INFERRED:** adjacent items concatenate. **OPEN:** whether that is specific to `print` or
-a general rule, and whether `(x)` interpolation works in any string context.
+a general rule, and whether `('x')` interpolation works in any string context.
 
 ## LaTeX notation — **OPEN**
 
@@ -398,4 +398,4 @@ Function definitions, control flow, indexing, modules, error handling, custom ty
 
 `set 'x' = …`, `loop while … { }`, and `invariant` appear in discussion examples as
 **PROPOSED** placeholders only — Claude invented those spellings. Indexing was written
-`(a)[(i)]`, which clashes with `[…]` for calls; unresolved.
+`('a')[('i')]`, which clashes with `[…]` for calls; unresolved.

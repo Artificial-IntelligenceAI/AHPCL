@@ -76,7 +76,7 @@ knowable at compile time, that is an **error**.
 
 ```
 var:int 'x' = '1000'.                        # knowable → inferred
-var:int 'y' = math { (x) x (x) }.            # constant-foldable → inferred
+var:int 'y' = math { ('x') x ('x') }.            # constant-foldable → inferred
 var:int 'z' = <read at runtime>.             # ERROR: state a precision
 var:int 'z' [32 bit] = <read at runtime>.    # fine
 var:infnum 'z' = <read at runtime>.          # fine — explicitly unbounded
@@ -86,7 +86,7 @@ Range analysis looks at *all* uses, not just the initialiser, so this widens `x`
 
 ```
 var:int 'x' = '1000'.
-var:int 'y' = math { (x) x 100 }.    # x reaches 100,000
+var:int 'y' = math { ('x') x 100 }.    # x reaches 100,000
 ```
 
 This is why `infnum` is not redundant: it is how unbounded is requested explicitly.
@@ -187,7 +187,7 @@ Programmer-supplied loop invariants, verified by induction — the compiler chec
 holds on entry and is preserved by each iteration, then uses it as a fact.
 
 ```
-loop while math { (n) > 1 } invariant math { (n) >= 1 } { … }
+loop while math { ('n') > 1 } invariant math { ('n') >= 1 } { … }
 ```
 
 This is what SPARK (avionics, rail), F\* (shipped TLS code), Dafny and Liquid Haskell do. The
@@ -206,20 +206,20 @@ A bare array reference in arithmetic **sums its elements**. Operating position-b
 requires an explicit `:all;` selector (see [syntax.md](syntax.md)):
 
 ```
-math { (a) + (b) }              # sum(a) + sum(b) — a single number
-math { (a):all; + (b):all; }    # elementwise: matching positions added
-math { (a) + 1 }                # sum(a) + 1
-math { (a):all; + 1 }           # 1 added to every element
+math { ('a') + ('b') }              # sum(a) + sum(b) — a single number
+math { ('a'):all; + ('b'):all; }    # elementwise: matching positions added
+math { ('a') + 1 }                  # sum(a) + 1
+math { ('a'):all; + 1 }             # 1 added to every element
 ```
 
 The **one exception** is the array operators `·`, `×`, `⊙`, `⊗`, which imply `:all;` — see
 [syntax.md](syntax.md).
 
-A redundancy worth knowing: `math { (a):all; x (b):all; }` and `math { (a) ⊙ (b) }` are the
+A redundancy worth knowing: `math { ('a'):all; x ('b'):all; }` and `math { ('a') ⊙ ('b') }` are the
 same operation, spelled two ways.
 
 It supersedes
-earlier wording in this file that showed `math { (a) + (b) ⊙ (c) }` acting on whole arrays;
+earlier wording in this file that showed `math { ('a') + ('b') ⊙ ('c') }` acting on whole arrays;
 under the rule as decided, that expression sums.
 
 Broadcasting is therefore **scalar-only, and only under `:all;`**.
@@ -247,7 +247,7 @@ vectors, matrix multiplication requires 2-D operands whose inner dimensions agre
 NumPy hazard:
 
 ```
-[[1,2],[3,4]] matmul [[5,6],[7,8]]  =  [[19,22],[43,50]]
+[[1,2],[3,4]]    ·   [[5,6],[7,8]]  =  [[19,22],[43,50]]
 [[1,2],[3,4]]    ⊙   [[5,6],[7,8]]  =  [[5,12],[21,32]]
 ```
 
@@ -271,13 +271,13 @@ already used for precision, where `infnum` is the "I am not bounding this" marke
 ```
 var:matrix:num 'a' [3, 4] = …
 var:matrix:num 'b' [4, 5] = …
-var:matrix:num 'c' = math { (a) matmul (b) }.    # inferred [3, 5]
+var:matrix:num 'c' = math { ('a') · ('b') }.    # inferred [3, 5]
 ```
 
 Mismatches are **compile** errors, before the program runs:
 
 ```
-error: shape mismatch — [3, 4] matmul [5, 2]
+error: shape mismatch — [3, 4] · [5, 2]
        inner dimensions must agree: 4 ≠ 5
 ```
 
@@ -308,10 +308,10 @@ real data, and it keeps compile-time checking on the dimension you *do* know:
 ```
 var:matrix:num 'data'    [?, 3] = read["measurements.csv"].
 var:matrix:num 'weights' [4, 2] = …
-math { (data) matmul (weights) }
+math { ('data') · ('weights') }
 ```
 ```
-error: shape mismatch — [?, 3] matmul [4, 2]
+error: shape mismatch — [?, 3] · [4, 2]
        inner dimensions must agree: 3 ≠ 4
 ```
 
@@ -324,7 +324,7 @@ notation cannot express, since you must write one `?` per dimension.
 
 **OPEN:** whether `dyn` prefixes every array type name (`dynvector`, `dyntensor`).
 
-**OPEN:** broadcasting — does `math { (a) + 1 }` add 1 to every element?
+
 
 ### Declaration form — **DECIDED**
 
@@ -387,7 +387,7 @@ Precision (`[n bit]`) and sign prefixes (`+`/`-`) are numeric-only, so the type 
 allow types that take neither.
 
 **OPEN:** what else `nna` may hold besides text (booleans? dates?), whether one `nna` may mix
-kinds, whether `nna` has a rank at all, and whether the summing rule makes bare `(names)`
+kinds, whether `nna` has a rank at all, and whether the summing rule makes bare `('names')`
 concatenate.
 
 ## Deferred types — **DECIDED to defer**

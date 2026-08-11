@@ -9,8 +9,8 @@ exactness is a first-class concern rather than an afterthought. It is a hobby pr
 
 ```
 var:num 'x' = '1000'.
-var:num '2x' = math { 10 x (x) }.
-print["The variable \"x\" is " (x) "."].
+var:num '2x' = math { 10 x ('x') }.
+print["The variable \"x\" is " ('x') "."].
 ```
 
 ## Status

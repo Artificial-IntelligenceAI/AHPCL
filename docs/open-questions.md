@@ -58,10 +58,9 @@ any string context?
 
 **8. Does `\` escape outside strings** too?
 
-**9. Confirm the whitespace rule** for `x`-as-multiplication (INFERRED in
-[syntax.md](syntax.md)). The whole `( )` design depends on it.
-
-**10. Approve the `.`-versus-decimal-point rule** (PROPOSED in [syntax.md](syntax.md)).
+**9. Does `x`-as-multiplication still need whitespace?** The rule existed to tell `(2x)` the
+name from `((x) x 20)` the expression. Quoted references removed that job — so what does `2x`
+mean now inside `math { }`?
 
 **11. Rewrite the temporary comment-overrun error message** once the Error Handler template exists — currently "What the heck am I supposed to do?"
 
