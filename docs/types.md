@@ -269,8 +269,39 @@ Shapes are written `[3, 4]`, **not** `[3 x 4]` — `x` is the multiplication ope
 `[R, C]` — are **deferred**. Option 3 exists precisely so this isn't a prerequisite; it can be
 added later, since a size-polymorphic signature is strictly more precise than an unshaped one.
 
-**OPEN:** how an unknown shape is written; whether partial shapes (known columns, unknown
-rows) are expressible; broadcasting.
+### Unknown shapes — **DECIDED**
+
+Both spellings exist:
+
+```
+var:matrix:num 'data' [?, 3] = read["measurements.csv"].
+var:dynmatrix:num 'data' = read["measurements.csv"].
+```
+
+`?` marks a dimension that isn't knowable at compile time. **Partial shapes are the point** —
+`[?, 3]` says "unknown row count, definitely 3 columns", which is the normal situation with
+real data, and it keeps compile-time checking on the dimension you *do* know:
+
+```
+var:matrix:num 'data'    [?, 3] = read["measurements.csv"].
+var:matrix:num 'weights' [4, 2] = …
+math { (data) matmul (weights) }
+```
+```
+error: shape mismatch — [?, 3] matmul [4, 2]
+       inner dimensions must agree: 3 ≠ 4
+```
+
+Caught at compile time despite nobody knowing the row count.
+
+`dynmatrix` is shorthand for a fully-unknown shape. **PROPOSED** distinction that would earn
+the `dyn` family a job of its own rather than pure redundancy: `[?, ?]` means *2-D with
+unknown sizes*, while `dyntensor` could mean *unknown number of dimensions* — something `?`
+notation cannot express, since you must write one `?` per dimension.
+
+**OPEN:** whether `dyn` prefixes every array type name (`dynvector`, `dyntensor`).
+
+**OPEN:** broadcasting — does `math { (a) + 1 }` add 1 to every element?
 
 **OPEN:** precision already claims the bracket slot (`[8 bit]`), so an array declaration needs
 both — `[3, 4] [32 bit]`, shape attached to the type, or something combined.

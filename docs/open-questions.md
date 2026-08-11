@@ -9,9 +9,9 @@ trade-offs first, then a single question.
 
 ## Arrays — model B chosen, details outstanding
 
-**1a. How is an unknown shape written?** Shapes are in the type when knowable (decided); the
-opt-out spelling is not. A separate type name (`dynmatrix`), question marks in the shape
-(`[?, 3]` — which also allows *partial* shapes, e.g. known columns and unknown rows), or both.
+**1a. Does `dyn` prefix every array type name** (`dynvector`, `dyntensor`)? And should
+`dyntensor` mean *unknown rank* — a distinction `?` notation cannot express — rather than being
+a pure synonym for `[?, ?]`?
 
 **1f. Where does the shape go in a declaration**, given precision already uses `[…]`? Two
 bracket groups (`'m' [3, 4] [32 bit]`), shape attached to the type (`matrix[3, 4]:num`), or
