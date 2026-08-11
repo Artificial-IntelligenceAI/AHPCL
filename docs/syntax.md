@@ -172,6 +172,34 @@ Safe to alias — nothing else uses them:
 ≤  ≥  ≠  ÷  √  π  ∞  ≈  ∧  ∨  ¬  ∈  →
 ```
 
+## Array literals — **DECIDED**
+
+Braces, **nested to mirror the shape**. `{ }` is unambiguous here because `math { }` always
+carries its keyword.
+
+```
+var:vector:num 'v' [3]    = {'1', '2', '3'}.
+var:matrix:num 'm' [2, 2] = {{'1', '2'}, {'3', '4'}}.
+```
+
+Values keep the mandatory quoting that applies everywhere outside `math { }`.
+
+Nesting and declared shape **cross-check each other**, the same way rank names do:
+
+```
+var:matrix:num 'm' [3, 2] = {{'1', '2'}, {'3', '4'}}.
+```
+```
+error: literal is [2, 2] but 'm' is declared [3, 2]
+```
+
+Rejected: a flat list folded by the shape (loses the cross-check, and a 3×3 becomes nine values
+with nothing marking the rows), and bare comma-extended values (collides with multi-variable
+declarations, forcing the parser to peek for an `=`).
+
+**OPEN:** whether the shape may be omitted when a literal already determines it — the same
+"infer when knowable" rule already used for precision would suggest yes. Also: empty arrays.
+
 ## Element selection — **DECIDED**
 
 A reference may carry a selector, introduced by `:` and closed by `;`:

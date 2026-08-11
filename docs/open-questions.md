@@ -13,7 +13,8 @@ trade-offs first, then a single question.
 `dyntensor` mean *unknown rank* — a distinction `?` notation cannot express — rather than being
 a pure synonym for `[?, ?]`?
 
-**1c. Array literal syntax** — how an array's values are written in source.
+**1c. May the shape be omitted when a literal determines it?** `var:matrix:num 'm' = {{'1','2'},{'3','4'}}.`
+is unambiguously `[2, 2]`, and precision already works this way. Also: how is an empty array written?
 
 **1g. Is `tensor` legal at rank 1 or 2**, or strictly rank 3 and above?
 
