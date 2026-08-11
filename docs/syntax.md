@@ -453,7 +453,26 @@ Rejected: bare chaining (`} else if`), which works but would be the one place a 
 continues without a comma; and an `elif`/`elseif` shorthand, a third keyword for something two
 existing words already say.
 
-**OPEN:** whether a conditional is a statement or an expression producing a value.
+### Conditionals are expressions — **DECIDED**
+
+A conditional **has a value**; you may ignore it. Used alone it looks like a statement and its
+value is discarded; used in a value position it produces one. Rust works the same way.
+
+```
+var:num 'abs' = if math { ('x') < 0 } { … }, else { ('x') }.
+```
+
+An `else` is required only when the value is actually used — otherwise a branch would be
+missing a value. All branches must agree on a type.
+
+This avoids declaring a throwaway initial value purely to overwrite it, which under AHPCL's
+rules would be a real value that range analysis has to account for.
+
+**Consequence:** `,` now does two jobs inside a declaration — extending to a second *variable*
+(`var:num 'y' = '1', 'z' = '2'.`) and extending an if/else *chain*. The keyword `else`
+distinguishes them, so it parses; it is still two jobs for one mark.
+
+**OPEN — blocking:** what a block `{ … }` evaluates to.
 
 ## Not yet designed
 
