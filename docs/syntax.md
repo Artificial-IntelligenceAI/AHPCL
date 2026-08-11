@@ -13,10 +13,10 @@ that **AHPCL needs no reserved-word list** — a variable can be called `'print'
 
 | Form | Meaning | Status |
 |---|---|---|
-| `#[…]` | Comment — block, may span lines | **DECIDED** |
-| `#` | Comment to end of line, when not followed by `[` | **INFERRED** |
-| `.` | Statement terminator (the role `;` plays elsewhere) | **DECIDED** |
+| `#` / `#3` / `#+3` | Comment — this line, or a line count | **DECIDED** |
+| `.` | Statement terminator | **DECIDED** |
 | `,` | Extends the current statement instead of ending it | **DECIDED** |
+| `:` … `;` | Element selector on a reference | **DECIDED** |
 | `\` | Escape character | **DECIDED** |
 | `'…'` | A name, or a literal value | **DECIDED** |
 | `"…"` | Text string; `\"` escapes a quote | **DECIDED** |
@@ -25,6 +25,7 @@ that **AHPCL needs no reserved-word list** — a variable can be called `'print'
 | `[…]` | Call arguments | **DECIDED** for `print`; **OPEN** whether all calls |
 | `math { … }` | Arithmetic block | **DECIDED** |
 | `[n bit]` | Precision, after the name in a declaration | **DECIDED** |
+| `[3, 4]` | Array shape, before precision in a declaration | **DECIDED** |
 
 ### The `.` / decimal-point clash — **PROPOSED**
 
@@ -163,7 +164,7 @@ a canonicalising formatter (`ahpcl fmt`) is the usual answer. **PROPOSED**, not 
 
 ### Unicode aliases — **OPEN**
 
-Tankun: "probably every, idk". `×` is confirmed. Everything else is open.
+Tankun: "probably every, idk". Nothing confirmed — `×` was reassigned to cross product.
 
 Safe to alias — nothing else uses them:
 
