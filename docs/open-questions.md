@@ -13,16 +13,13 @@ trade-offs first, then a single question.
 `dyntensor` mean *unknown rank* — a distinction `?` notation cannot express — rather than being
 a pure synonym for `[?, ?]`?
 
-**1f. Confirm the `matrix:num` spelling** — how an array names its element type, and in which order (`matrix:num` vs `num:matrix`). Currently INFERRED.
-
-
+**1c. Array type names, and how the element type is spelled.** `matrix:num` is INFERRED, not
+decided — both the names themselves and the order (`matrix:num` vs `num:matrix`). Note "vector"
+is ambiguous, since C++ and Rust use it to mean "growable array" with no geometric meaning.
+Array *literal* syntax is also unsettled.
 
 **1b. Broadcasting** — does `math { (a) + 1 }` add 1 to every element? Convenient; also a
 famous source of shape bugs.
-
-**1c. Array type syntax, type names, and array literals.** `var:vec:num 'a' = …` appears in
-discussion, but `vec` is Claude's invention — and "vector" is ambiguous, since C++ and Rust use
-it to mean "growable array" with no geometric meaning.
 
 **1e. Which symbol does matrix multiplication get?** It is distinct from `⊙` elementwise and
 from `·` dot. Common choices elsewhere are `@` (Python), `*` (MATLAB), and `·`.
