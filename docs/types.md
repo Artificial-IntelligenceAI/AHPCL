@@ -314,8 +314,30 @@ var:matrix:num 'm' [3, 4] [32 bit] = …
 Scalar declarations are unchanged — precision keeps the position it already had. The groups
 can't be confused, since precision always carries the word `bit`.
 
-**INFERRED, not decided:** the `matrix:num` spelling itself — how an array names its element
-type, and in which order.
+### Type names — **DECIDED**
+
+Named by rank, and the name is **required**:
+
+```
+var:vector:num 'v' [3]       = …
+var:matrix:num 'm' [3, 4]    = …
+var:tensor:num 't' [3, 4, 5] = …
+```
+
+There is no general "any rank" name. Name and shape **cross-check each other**, so a
+disagreement is an error:
+
+```
+var:matrix:num 'm' [3] = …
+```
+```
+error: 'matrix' is 2-dimensional, but shape [3] is 1-dimensional
+```
+
+Element type is written after the rank name — `matrix:num`, a matrix *of* nums, reading as a
+narrowing chain the same way `var:num` does (**INFERRED**: the order was assumed, not stated).
+
+**OPEN:** whether `tensor` is legal at rank 1 or 2, or strictly rank 3 and above.
 
 ## Deferred types — **DECIDED to defer**
 

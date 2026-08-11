@@ -13,10 +13,11 @@ trade-offs first, then a single question.
 `dyntensor` mean *unknown rank* — a distinction `?` notation cannot express — rather than being
 a pure synonym for `[?, ?]`?
 
-**1c. Array type names, and how the element type is spelled.** `matrix:num` is INFERRED, not
-decided — both the names themselves and the order (`matrix:num` vs `num:matrix`). Note "vector"
-is ambiguous, since C++ and Rust use it to mean "growable array" with no geometric meaning.
-Array *literal* syntax is also unsettled.
+**1c. Array literal syntax** — how an array's values are written in source.
+
+**1g. Is `tensor` legal at rank 1 or 2**, or strictly rank 3 and above?
+
+**1h. Confirm the element-type order** — `matrix:num` was assumed, never stated.
 
 **1b. Broadcasting** — does `math { (a) + 1 }` add 1 to every element? Convenient; also a
 famous source of shape bugs.
