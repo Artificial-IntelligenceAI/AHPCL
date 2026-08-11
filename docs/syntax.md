@@ -504,9 +504,33 @@ reusing it here would make it ambiguous once functions exist.
 
 **OPEN:** unary minus. `-('x')` as *negation* rather than subtraction has never been decided.
 
+### Loops — **DECIDED: two kinds**
+
+Both a **counted** loop and a **condition** loop exist.
+
+```
+loop 'i' 1 to 10 { … }.              # counted — illustrative syntax only
+loop while math { ('n') > 1 } { … }. # condition — illustrative syntax only
+```
+
+The counted form reuses `to` and `by` from range selectors, so it needs no new vocabulary.
+
+The distinction matters more here than in most languages: **counted loops always terminate**, so
+layer 1 of verification can always evaluate them at compile time and layer 2 always converges.
+**Condition loops might not terminate**, and they are exactly the case that can run the
+compiler's unbounded evaluation until the skip flag is used. See [types.md](types.md).
+
+Rejected: counted-only (cannot express "keep going until something happens") and
+condition-only (counting becomes three lines, and every loop lands in the hard-to-analyse
+category).
+
+**OPEN:** the actual syntax — the keywords, where the loop variable goes, whether the counted
+form declares its variable or uses an existing one, and whether loops are expressions with a
+value the way conditionals are.
+
 ## Not yet designed
 
-Function definitions, loops, indexing, modules, error handling, custom types.
+Function definitions, indexing, modules, error handling, custom types.
 
 `set 'x' = …`, `loop while … { }`, and `invariant` appear in discussion examples as
 **PROPOSED** placeholders only — Claude invented those spellings. Indexing was written

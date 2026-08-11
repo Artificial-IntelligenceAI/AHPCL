@@ -60,8 +60,17 @@ any string context?
 
 **13. Indexing syntax.** Discussion used `(a)[(i)]`, which clashes with `[…]` for calls.
 
-**14. Function definitions, control flow, and the mutation statement.** `set 'x' = …` and
-`loop while … { }` are Claude's invented placeholders, not decisions.
+**14a. Loop syntax.** Both counted and condition loops are decided to exist; their spelling is
+not — keywords, where the loop variable goes, whether the counted form declares its variable,
+and whether loops are expressions with a value the way conditionals are.
+
+**14b. Function definitions and calls.** Nothing decided. Relates to #6 (whether `[…]` is how
+all calls work).
+
+**14c. The mutation statement.** `set 'x' = …` is Claude's invented placeholder. Variables are
+mutable, but there is no decided syntax for reassigning one.
+
+**14d. Unary minus.** `-('x')` as negation rather than subtraction has never been decided.
 
 ---
 
