@@ -27,14 +27,24 @@ that **AHPCL needs no reserved-word list** — a variable can be called `'print'
 | `[n bit]` | Precision, after the name in a declaration | **DECIDED** |
 | `[3, 4]` | Array shape, before precision in a declaration | **DECIDED** |
 
-### The `.` / decimal-point clash — **PROPOSED**
+### The `.` / decimal-point clash — **DECIDED: context decides**
 
-`.` terminates statements, but it is also the decimal point in a numbers language. Proposed
-lexer rule: **a `.` followed by a digit is a decimal point; otherwise it terminates the
-statement.**
+Inside `math { }`, `.` is a **decimal point**. Outside, it **terminates a statement**.
 
-Consequences to accept if adopted: `.5` must be written `0.5`, and `3.` cannot mean `3.0`.
-Also pre-commits `.` away from any future `thing.field` member syntax.
+No lookahead and no special cases, because a bare decimal can only ever appear inside a math
+block — everywhere else numbers are quoted (`'1000'`) or necessarily whole:
+
+```
+[3, 4]        shape — integers
+[32 bit]      precision — integer
+(a):1, 3;     selector — integers
+#3            comment count — integer
+```
+
+`.5` is therefore legal inside math, which the earlier digit-lookahead proposal would have cost.
+
+This rests on one assumption: a `math { }` block never needs a statement terminator inside it.
+True today — a math block holds a single expression — but revisit if that changes.
 
 ## Comments — **DECIDED**
 
