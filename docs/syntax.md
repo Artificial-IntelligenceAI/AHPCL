@@ -417,9 +417,27 @@ Tankun wrote `\(2^{3}\)` as the "real world" power notation. Two readings, never
 
 Note `\` is already **DECIDED** as the escape character, which Reading B would contest.
 
+## Control flow — **partially decided**
+
+### Conditionals — **DECIDED**
+
+Bare keyword, condition in a `math { }` block, body in braces:
+
+```
+if math { ('x') > 5 } {
+    print["big"].
+}.
+```
+
+Rejected: `if[…]` (condition as a bracketed argument, matching `print[…]`) and `if:…` (colon
+style, matching `var:num`).
+
+**OPEN:** how `else` and else-if attach; whether a conditional is a statement or an expression
+producing a value (the latter would allow `var:num 'y' = if … { … }`).
+
 ## Not yet designed
 
-Function definitions, control flow, indexing, modules, error handling, custom types.
+Function definitions, loops, indexing, modules, error handling, custom types.
 
 `set 'x' = …`, `loop while … { }`, and `invariant` appear in discussion examples as
 **PROPOSED** placeholders only — Claude invented those spellings. Indexing was written
