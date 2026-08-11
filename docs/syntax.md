@@ -331,8 +331,31 @@ delimiters themselves via `\`:
 Because names are quoted, they are unconstrained — `'2x'` (leading digit) is legal, and so
 are names that shadow operators or keywords.
 
-**PROPOSED:** follow UAX #31 for which characters may appear in names, and warn on
-confusable pairs such as Cyrillic `А` vs Latin `A`.
+### Escaping — **DECIDED**
+
+Inside `'…'`, **only `'` and `\` need escaping**. Emoji, spaces, dots, punctuation and every
+other character are literal. Same inside `"…"` for `"` and `\`.
+
+### Referencing awkward names — **DECIDED**
+
+Bare when the name is a clean single token; quoted when it is not:
+
+```
+print[(name)].            # ordinary name
+print[(😂)].              # emoji is fine bare
+print[('my variable')].   # contains a space
+print[('.')].             # contains the statement terminator
+```
+
+That last case is forced, not stylistic: a variable named `.` cannot be referenced bare,
+because `(.)` lexes as an open paren, an end-of-statement, and a stray close paren.
+
+**PROPOSED:** follow UAX #31 for which characters may appear in *unquoted* references, and warn
+on confusable pairs such as Cyrillic `А` vs Latin `A`.
+
+**OPEN:** the escape list beyond `\'`, `\"`, `\\` — `\n` for a newline, and a codepoint form
+such as `\u{1F602}` (which would also let lookalike characters be written explicitly rather
+than pasted and hoped for).
 
 ## Output — **DECIDED**
 
