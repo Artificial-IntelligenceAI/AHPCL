@@ -13,9 +13,9 @@ trade-offs first, then a single question.
 `dyntensor` mean *unknown rank* — a distinction `?` notation cannot express — rather than being
 a pure synonym for `[?, ?]`?
 
-**1f. Where does the shape go in a declaration**, given precision already uses `[…]`? Two
-bracket groups (`'m' [3, 4] [32 bit]`), shape attached to the type (`matrix[3, 4]:num`), or
-combined.
+**1f. Confirm the `matrix:num` spelling** — how an array names its element type, and in which order (`matrix:num` vs `num:matrix`). Currently INFERRED.
+
+
 
 **1b. Broadcasting** — does `math { (a) + 1 }` add 1 to every element? Convenient; also a
 famous source of shape bugs.

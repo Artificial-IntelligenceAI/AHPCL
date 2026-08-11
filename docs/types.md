@@ -303,8 +303,19 @@ notation cannot express, since you must write one `?` per dimension.
 
 **OPEN:** broadcasting — does `math { (a) + 1 }` add 1 to every element?
 
-**OPEN:** precision already claims the bracket slot (`[8 bit]`), so an array declaration needs
-both — `[3, 4] [32 bit]`, shape attached to the type, or something combined.
+### Declaration form — **DECIDED**
+
+Shape and precision are **two bracket groups**, shape first:
+
+```
+var:matrix:num 'm' [3, 4] [32 bit] = …
+```
+
+Scalar declarations are unchanged — precision keeps the position it already had. The groups
+can't be confused, since precision always carries the word `bit`.
+
+**INFERRED, not decided:** the `matrix:num` spelling itself — how an array names its element
+type, and in which order.
 
 ## Deferred types — **DECIDED to defer**
 
