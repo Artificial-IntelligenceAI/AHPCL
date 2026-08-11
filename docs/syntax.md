@@ -155,9 +155,24 @@ var:num 'z'  = math { 87 x (('x') x 20) }.
 Variables must be referenced with `('…')`. `math { 10 x x }` is wrong; the second `x`
 is another multiplication sign, not the variable.
 
-**OPEN:** is `math { }` required for *all* arithmetic, or only when the extended symbol set
-is wanted? A useful property if it is required: `x`-as-multiplication then exists only
-inside math blocks, so elsewhere `x` is unambiguously just a name.
+### Always required — **DECIDED**
+
+`math { }` is required for **all** arithmetic and comparison, with no bare-expression
+shorthand:
+
+```
+var:num 'y' = math { 5 + 3 }.
+if[math { ('x') > 5 }] { … }
+```
+
+The reason is that **`math { }` is a lexer mode**. Inside it, numbers are bare, `.` is a decimal
+point, and `x` is an operator. Outside it, numbers are quoted, `.` terminates statements, and
+`x` is just a letter. Those are two different rule sets, and one clearly marked boundary is far
+simpler than letting the mode leak into unmarked places.
+
+It is also what the `.`-versus-decimal-point decision rests on: allowing bare arithmetic outside
+math blocks would put bare numbers back into ordinary statements, costing `.5` and forcing a
+digit-lookahead rule.
 
 ## Operators
 

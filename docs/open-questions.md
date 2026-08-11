@@ -49,8 +49,6 @@ rather than aliases, and `∘` is unassigned.
 easy) or genuinely embedded LaTeX math mode (`\frac`, `\sum`, `\int` — a signature feature, and
 a second parser). Note `\` is already the escape character.
 
-**5. Is `math { }` required for all arithmetic**, or only when the extended symbols are wanted?
-
 **6. Is `[…]` how all calls work** — `add[1 2]`, space-separated, no commas anywhere?
 
 **7. Is juxtaposition-concatenation general** or specific to `print`? Does `(x)` interpolate in
