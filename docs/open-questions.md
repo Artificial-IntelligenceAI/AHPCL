@@ -20,9 +20,11 @@ is unambiguously `[2, 2]`, and precision already works this way. Also: how is an
 
 **1h. Confirm the element-type order** — `matrix:num` was assumed, never stated.
 
-**1i. Selector ranges** — selecting elements 1 through 100 without listing them. Note `..` is
-unavailable: `1..100` breaks the decimal-point rule. Also whether selectors double as general
-indexing (which would settle #13), and whether a step/stride is expressible.
+**1i. Do selectors double as general indexing?** Would settle #13, the `(a)[(i)]` clash with
+call brackets.
+
+**1j. Is there a text type at all?** Strings appear only as `print` arguments so far — no type
+name, and nothing decided about text as a value. See [types.md](types.md).
 
 **1d. Resolved by the summing rule** — `math { (a) x (b) }` is sum(a) × sum(b), and
 `math { (a):all; x (b):all; }` is elementwise, identical to `⊙`.

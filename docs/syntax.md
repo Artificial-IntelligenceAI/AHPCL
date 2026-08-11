@@ -242,8 +242,22 @@ coexist, since `|a|b|c|` is ambiguous. A forgotten separator is also silent ther
 Also rejected: dropping the repeated `:` (`(m):1, 3; 2, 4;`). Indices can be variables, so after
 a `;` the parser cannot tell whether `(b)` opens another dimension or is the next operand.
 
-**OPEN:** ranges (selecting elements 1 through 100 without listing them); whether this doubles
-as the general indexing syntax, which would resolve the `(a)[(i)]` clash with call brackets.
+### Ranges — **DECIDED**
+
+```
+math { (a):1 to 100; }
+math { (a):1 to 100 by 2; }      # with a step
+```
+
+`..` was **unavailable**: `1..100` breaks the decimal-point rule, since a `.` not followed by a
+digit terminates the statement.
+
+Keywords cost nothing here — because names are quoted, a variable called `'to'` is written
+`(to)`, so bare `to` can never collide with it. AHPCL can add keywords freely in a way most
+languages cannot.
+
+**OPEN:** whether selectors double as the general indexing syntax, which would resolve the
+`(a)[(i)]` clash with call brackets.
 
 **DECIDED:** a *bare* array reference in arithmetic sums its elements — see
 [types.md](types.md). `:all;` is what makes an operation position-by-position.
