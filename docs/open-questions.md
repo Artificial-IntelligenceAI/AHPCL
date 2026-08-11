@@ -19,8 +19,14 @@ a pure synonym for `[?, ?]`?
 
 **1h. Confirm the element-type order** — `matrix:num` was assumed, never stated.
 
-**1b. Broadcasting** — does `math { (a) + 1 }` add 1 to every element? Convenient; also a
-famous source of shape bugs.
+**1b. BLOCKING — what does a bare array reference mean in arithmetic?** Scalar-only
+broadcasting was chosen, then refined: `math { (a) + 1 }` **sums** every element of `a` and
+adds 1, while `math { (a):all; + 1 }` adds 1 elementwise. Unresolved: whether `math { (a) + (b) }`
+with two arrays is elementwise, or the sum of each. The second reading would revise the
+model-B example already approved, where `math { (a) + (b) ⊙ (c) }` operates on whole arrays.
+
+**1i. Selector details** — ranges instead of listing indices; how selection addresses a matrix
+or higher rank; whether selectors double as general indexing (which would settle #13).
 
 **1e. Which symbol does matrix multiplication get?** It is distinct from `⊙` elementwise and
 from `·` dot. Common choices elsewhere are `@` (Python), `*` (MATLAB), and `·`.

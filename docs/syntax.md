@@ -171,6 +171,30 @@ Safe to alias — nothing else uses them:
 ≤  ≥  ≠  ÷  √  π  ∞  ≈  ∧  ∨  ¬  ∈  →
 ```
 
+## Element selection — **DECIDED**
+
+A reference may carry a selector, introduced by `:` and closed by `;`:
+
+```
+math { (a):all; + 1 }          # add 1 to every element → an array
+math { (a):1, 3, 9; + 1 }      # only the 1st, 3rd and 9th elements
+```
+
+`;` is needed because the selector list uses `,`, which otherwise means "extend" — so the
+semicolon marks where the selection stops and the expression resumes.
+
+**Indices are 1-based** — `1` is the first element. Consistent with mathematical notation and
+with MATLAB, Julia, Fortran and R, rather than with C-family languages.
+
+Selection results have statically computable shapes, which fits shapes-in-types: selecting 3
+elements from a `vector [10]` yields a `vector [3]`.
+
+**OPEN:** ranges (selecting elements 1 through 100 without listing them); how selection
+addresses a matrix or higher-rank array; whether this doubles as the general indexing syntax,
+which would resolve the `(a)[(i)]` clash with call brackets.
+
+**OPEN — blocking:** what a *bare* array reference means in arithmetic. See below.
+
 ### Array operators — **DECIDED**
 
 Reserved as genuinely distinct operations, *not* aliases. On `[1, 2, 3]` and `[4, 5, 6]`:
