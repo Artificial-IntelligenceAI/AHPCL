@@ -470,6 +470,44 @@ way a declaration does.
 change:var:num 'x' = '1', 'y' = '2'.
 ```
 
+## Scoping — **DECIDED**
+
+**Blocks create a scope.** A variable declared inside `{ … }` exists from its declaration to the
+closing brace and no further; using it afterwards is `AHPCL-NAME-0001`.
+
+```
+if math { ('x') > 5 } {
+    var:num 'y' = '5'.
+}.
+print[('y')].            # error: no variable named 'y'
+```
+
+Only *creation* is affected. Changing an outer variable from inside a block is ordinary:
+
+```
+var:num 'y' = '0'.
+if math { ('x') > 5 } {
+    change:var:num 'y' = '5'.
+}.
+print[('y')].            # fine — 'y' lives outside
+```
+
+This is a real payoff from splitting `var:` and `change:`. Where one syntax does both jobs, a
+reader cannot tell whether a block creates a new variable or modifies an outer one — the
+ambiguity behind Python's scoping surprises and JavaScript's `var` hoisting. AHPCL states it at
+every site.
+
+Two further benefits: tighter scopes make range analysis and flow-sensitive refinement checking
+easier *and* more precise, and the loop-counter question settles itself — `('i')` vanishes at the
+closing brace, so "after `1 to 10`, is `('i')` 10 or 11?" never arises.
+
+**Shadowing is reported** by the Informer. Because AHPCL names may contain spaces, emoji and
+lookalike characters, accidental shadowing is easier here than in most languages:
+
+```
+informer: main.ahpcl:9:5 — 'y' here shadows 'y' declared at 3:1
+```
+
 ## Control flow — **partially decided**
 
 ### Conditionals — **DECIDED**
@@ -622,8 +660,9 @@ Rejected: making it mutable (which would collapse counted loops into the same un
 as `loop:while`, so `loop:var:` would only *look* bounded), and mutable-with-an-Informer-note
 (which makes the guarantee something to check rather than something structural).
 
-**OPEN:** whether loops are expressions with a value the way conditionals are; whether the
-counter still exists after the loop ends — see scoping, below.
+The counter does **not** outlive the loop — see Scoping above.
+
+**OPEN:** whether loops are expressions with a value the way conditionals are.
 
 The distinction matters more here than in most languages: **counted loops always terminate**, so
 layer 1 of verification can always evaluate them at compile time and layer 2 always converges.
