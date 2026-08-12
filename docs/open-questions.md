@@ -65,8 +65,8 @@ and whether loops are expressions with a value the way conditionals are.
 **14b. Function definitions and calls.** Nothing decided. Relates to #6 (whether `[…]` is how
 all calls work).
 
-**14c. The mutation statement.** `set 'x' = …` is Claude's invented placeholder. Variables are
-mutable, but there is no decided syntax for reassigning one.
+**14c. `change:` details** — whether precision appears in it, and whether `,` extends one. The
+statement itself is decided: `change:var:num 'x' = '2000'.`
 
 **14d. Unary minus.** `-('x')` as negation rather than subtraction has never been decided.
 

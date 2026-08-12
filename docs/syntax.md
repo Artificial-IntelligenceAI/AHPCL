@@ -417,6 +417,43 @@ Tankun wrote `\(2^{3}\)` as the "real world" power notation. Two readings, never
 
 Note `\` is already **DECIDED** as the escape character, which Reading B would contest.
 
+## Changing a variable — **DECIDED**
+
+`change:` prefixed onto the full declaration form, restating the type:
+
+```
+var:num 'x' = '1000'.
+change:var:num 'x' = '2000'.
+```
+
+**The restated type is documentation for the reader** — in a large codebase you see the type at
+the point of change without hunting for the declaration. Tankun's rationale: "a team thing with
+big code bases."
+
+It is therefore **required, and verified**:
+
+```
+var:num 'x' = '1000'.
+change:var:int 'x' = '2000'.
+```
+```
+error: 'x' was declared num, but this says int
+```
+
+Documentation that can drift out of sync is worse than none — if the type could differ, or were
+optional, a reader could not trust it and would check the declaration anyway, defeating the
+purpose.
+
+Rejected: retyping the variable. A variable's type is what range analysis and flow-sensitive
+refinement checking are built on; a type that changes partway through would force those analyses
+to track a type per *program point* rather than per variable, and `('x')` would mean different
+things on different lines.
+
+Also rejected: `set 'x' = …` (a bare keyword) and `'x' = …` (no keyword at all).
+
+**OPEN:** whether precision appears in a `change:`, and whether `,` extends one the way it
+extends a declaration (`change:var:num 'x' = '1', 'y' = '2'.`).
+
 ## Control flow — **partially decided**
 
 ### Conditionals — **DECIDED**
