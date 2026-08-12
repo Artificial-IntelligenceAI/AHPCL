@@ -79,9 +79,10 @@ print["Hello, World!"].
   with a space — for a plain one-line comment. No warning, no mitigation: the space is the
   programmer's responsibility.
 
-- **Overrunning the end of the file is an error.** `#10` with four lines left does not clamp.
-  Placeholder message, explicitly temporary: *"What the heck am I supposed to do?"* — to be
-  rewritten once the Error Handler template exists. See [diagnostics.md](diagnostics.md).
+- **Overrunning the end of the file is an error**, code `AHPCL-LEX-0001`. `#10` with four lines
+  left does not clamp. Message still the explicitly temporary *"What the heck am I supposed to
+  do?"* — the template now exists, so rewriting it is actionable. See
+  [diagnostics.md](diagnostics.md).
 
 ### Placeholders — **removed**
 
@@ -162,7 +163,7 @@ shorthand:
 
 ```
 var:num 'y' = math { 5 + 3 }.
-if[math { ('x') > 5 }] { … }
+if math { ('x') > 5 } { … }
 ```
 
 The reason is that **`math { }` is a lexer mode**. Inside it, numbers are bare, `.` is a decimal
