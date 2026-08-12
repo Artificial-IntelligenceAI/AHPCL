@@ -65,8 +65,8 @@ and whether loops are expressions with a value the way conditionals are.
 **14b. Function definitions and calls.** Nothing decided. Relates to #6 (whether `[…]` is how
 all calls work).
 
-**14c. `change:` details** — whether precision appears in it, and whether `,` extends one. The
-statement itself is decided: `change:var:num 'x' = '2000'.`
+**14c. Confirm `,` extends a `change:`** — recorded as INFERRED from the language-wide comma
+rule. Everything else about `change:` is decided.
 
 **14d. Unary minus.** `-('x')` as negation rather than subtraction has never been decided.
 

@@ -452,8 +452,23 @@ things on different lines.
 
 Also rejected: `set 'x' = …` (a bare keyword) and `'x' = …` (no keyword at all).
 
-**OPEN:** whether precision appears in a `change:`, and whether `,` extends one the way it
-extends a declaration (`change:var:num 'x' = '1', 'y' = '2'.`).
+**Precision is never written in a `change:`** — **DECIDED**:
+
+```
+var:int 'x' = '1000'.
+change:var:int 'x' = '2000'.        # no [n bit], ever
+```
+
+Width is a whole-variable property that range analysis owns, not a per-assignment one. Requiring
+it would mean stating a number the compiler inferred and you may never have written — you would
+be reading Informer output to find out what to type.
+
+**INFERRED from the language-wide `,` rule**, not separately confirmed: a change extends the same
+way a declaration does.
+
+```
+change:var:num 'x' = '1', 'y' = '2'.
+```
 
 ## Control flow — **partially decided**
 
