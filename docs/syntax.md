@@ -583,7 +583,28 @@ Rejected: a bare form (`loop 'i' 1 to 10`), which would be the only place a vari
 existence without `var:`; and a range-as-value form (`loop 'i' in math { 1 to 10 }`), which needs
 a new `in` keyword.
 
-The condition form's spelling is still **OPEN**.
+### The condition loop — **DECIDED**
+
+Same pattern; the `:` says which *kind* of loop:
+
+```
+loop:while math { ('n') > 1 } {
+    change:var:int 'n' = math { ('n') - 1 }.
+}.
+```
+
+`loop:var:` is counted, `loop:while` is conditional. Keeping both visibly `loop:` something puts
+the distinction that matters right in the keyword — **counted loops always terminate; condition
+loops can run the compiler's unbounded evaluation indefinitely.** It also leaves room for more
+kinds (`loop:until`, `loop:forever`) without new top-level keywords.
+
+Rejected: `loop while …` (the two forms of one construct punctuated differently) and a separate
+`while` keyword (which would hide the fact that both are loops, and with it the verification
+distinction).
+
+**OPEN:** whether loops are expressions with a value the way conditionals are; whether the
+counted loop's counter still exists after the loop ends; whether the counter may be changed
+inside the body.
 
 The distinction matters more here than in most languages: **counted loops always terminate**, so
 layer 1 of verification can always evaluate them at compile time and layer 2 always converges.
