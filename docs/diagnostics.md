@@ -44,20 +44,51 @@ informer: compile-time evaluation took 21.4s of 24.1s total
 Known trade-off, accepted: at full detail a large program may emit a great many notes. A
 `--quiet` escape hatch is **PROPOSED**, not requested.
 
-## The Error Handler — **OPEN**
+## The Error Handler — **DECIDED: template**
 
-Tankun offered an error-message sample/template; it has not been provided yet. Until then
-nothing here is decided.
+```
+AHPCL Error Handler:
+Hello, I think that there's something wrong.
+file:line:col
+file:
+line:
+column:
+rule conditions:
+suggest fix:
+```
 
-Questions the template needs to settle:
+The greeting appears **once**, not per error — with two or more errors it is not repeated.
 
-- **Error codes?** Something like `AHPCL-E0012` makes errors searchable and documentable.
-- **Source excerpts** — show the offending line with a marker beneath it? Can a single error
-  carry more than one label (the error here, "because of this" there)?
-- **Suggestion lines** — `help: write :deci instead`?
-- **Placement** — is Informer output interleaved with errors, or a separate section?
-- **Machine-readable output** — JSON for editor integration. Later, but it shapes the
-  internal representation, so worth knowing early.
+Rendered with a real error:
+
+```
+AHPCL Error Handler:
+Hello, I think that there's something wrong.
+main.ah:12:17
+file: main.ah
+line: 12
+column: 17
+rule conditions: matrix multiplication requires inner dimensions to agree.
+                 'a' is [3, 4] and 'b' is [5, 2] — 4 ≠ 5.
+suggest fix: declare 'b' as [4, 2], or transpose it before multiplying.
+```
+
+Note the template carries both a compact `file:line:col` line and the same three values spelled
+out beneath it. Recorded as written; **confirm** whether that repetition is intended.
+
+**OPEN:** whether the `AHPCL Error Handler:` header also appears only once, or per error — only
+the *greeting* was specified.
+
+**OPEN:** what separates consecutive errors.
+
+**OPEN:** whether errors may point at **more than one location**. Several already-decided errors
+are inherently two-place — a refinement violation is "this promise, made here, is broken by that
+assignment, over there" — and the template has one location slot.
+
+**OPEN:** whether the source line itself is shown.
+
+**OPEN:** error codes (`AHPCL-E0012`) for searchability; whether the Informer shares this
+template; machine-readable output for editors.
 
 ## Errors decided so far
 
