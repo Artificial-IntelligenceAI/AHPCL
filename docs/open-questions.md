@@ -58,11 +58,6 @@ is actionable. Currently "What the heck am I supposed to do?", and it needs code
 
 **13. Indexing syntax.** Discussion used `(a)[(i)]`, which clashes with `[…]` for calls.
 
-**14a. Loop semantics.** Spelling is decided (`loop:var:int 'i' = math { 1 to 10 }` and
-`loop:while math { … }`). Still open: whether loops are expressions with a value the way
-conditionals are; whether the counter outlives the loop; whether the counter may be changed
-inside the body.
-
 **14b. Function definitions and calls.** Nothing decided. Relates to #6 (whether `[…]` is how
 all calls work).
 

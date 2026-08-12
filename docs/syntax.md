@@ -688,7 +688,32 @@ conditional's value may be discarded.
 Rejected: statement-only loops, and producing just the final `handback` (which a variable does
 more clearly).
 
-**OPEN:** whether nesting loops builds higher-rank arrays.
+### Nesting builds higher rank — **DECIDED**
+
+A `handback` may itself be an array, and the result gains a dimension:
+
+```
+var:matrix:num 'times_table' = loop:var:int 'i' = math { 1 to 3 } {
+    handback loop:var:int 'j' = math { 1 to 4 } {
+        handback math { ('i') x ('j') }.
+    }.
+}.
+```
+```
+{{1, 2, 3,  4},
+ {2, 4, 6,  8},
+ {3, 6, 9, 12}}
+```
+
+Shapes stay computable: `[3]` outer × `[4]` inner = `matrix [3, 4]`, known at compile time. Nest
+three deep for a tensor, with no new syntax. This is how a matrix defined by a formula is written.
+
+Every `handback` must produce the **same shape** — automatic for counted loops, checked for
+`loop:while`, and a mismatch is a shape error. That is also what keeps arrays rectangular, as the
+type system requires.
+
+Rejected: restricting arrays to scalars, which would leave literals as the only way to build a
+matrix.
 
 The distinction matters more here than in most languages: **counted loops always terminate**, so
 layer 1 of verification can always evaluate them at compile time and layer 2 always converges.
