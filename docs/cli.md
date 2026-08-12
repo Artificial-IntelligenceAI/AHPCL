@@ -8,7 +8,7 @@ See [README.md](README.md) for the status legend.
 with `.`, and `,` extends rather than ends.
 
 ```
-ahpcl task:build. buildfile:main.ah. resultname:myprogram. to:/Users/ts/build.
+ahpcl task:build. buildfile:main.ahpcl. resultname:myprogram. to:/Users/ts/build.
 ```
 
 Binary name is `ahpcl` — **INFERRED**, written `ahcpl` once, assumed a slip.
@@ -29,7 +29,7 @@ A comma continues the current directive; a full stop closes it. So multi-file bu
 new syntax:
 
 ```
-ahpcl task:build. buildfile:main.ah, lib.ah, math.ah. resultname:myprogram.
+ahpcl task:build. buildfile:main.ahpcl, lib.ahpcl, math.ahpcl. resultname:myprogram.
 ```
 
 And flags are one directive with comma-separated assignments:

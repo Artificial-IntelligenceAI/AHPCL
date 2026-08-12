@@ -33,7 +33,7 @@ skip command and a closing timing report:
 ```
 informer: line 12 — evaluating loop at compile time...
           1,240,000 iterations · 3.2s elapsed
-          skip with: ahpcl build main.ah --no-const-eval
+          skip with: ahpcl task:build. flag:loop-evaluation = limit.
 
 informer: line 12 — loop evaluated at compile time
           8,400,000 iterations · 21.4s · +int on 'n' verified
@@ -59,22 +59,33 @@ suggest fix:
 
 The greeting appears **once**, not per error — with two or more errors it is not repeated.
 
+**The source line is shown**, with a marker under the offending span — the single most-praised
+feature of Rust's diagnostics, and good errors were the stated reason for choosing Rust as the
+host language.
+
 Rendered with a real error:
 
 ```
 AHPCL Error Handler:
 Hello, I think that there's something wrong.
-main.ah:12:17
-file: main.ah
+main.ahpcl:12:17
+file: main.ahpcl
 line: 12
 column: 17
+
+    12 |     var:matrix:num 'c' = math { ('a') · ('b') }.
+       |                                       ^^^^^^^^
+
 rule conditions: matrix multiplication requires inner dimensions to agree.
                  'a' is [3, 4] and 'b' is [5, 2] — 4 ≠ 5.
 suggest fix: declare 'b' as [4, 2], or transpose it before multiplying.
 ```
 
-Note the template carries both a compact `file:line:col` line and the same three values spelled
-out beneath it. Recorded as written; **confirm** whether that repetition is intended.
+Source files use the extension **`.ahpcl`**.
+
+The repetition is **deliberate**: `file:line:col` is the compact form editors and terminals
+click on, and the three spelled-out fields beneath are a **legend** teaching you how to read it.
+Not redundancy — do not "tidy" it away.
 
 **OPEN:** whether the `AHPCL Error Handler:` header also appears only once, or per error — only
 the *greeting* was specified.
@@ -84,8 +95,6 @@ the *greeting* was specified.
 **OPEN:** whether errors may point at **more than one location**. Several already-decided errors
 are inherently two-place — a refinement violation is "this promise, made here, is broken by that
 assignment, over there" — and the template has one location slot.
-
-**OPEN:** whether the source line itself is shown.
 
 **OPEN:** error codes (`AHPCL-E0012`) for searchability; whether the Informer shares this
 template; machine-readable output for editors.
