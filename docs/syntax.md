@@ -562,11 +562,28 @@ reusing it here would make it ambiguous once functions exist.
 Both a **counted** loop and a **condition** loop exist.
 
 ```
-loop 'i' 1 to 10 { … }.              # counted — illustrative syntax only
-loop while math { ('n') > 1 } { … }. # condition — illustrative syntax only
+loop:var:int 'i' = math { 1 to 10 } {
+    print[('i')].
+}.
 ```
 
-The counted form reuses `to` and `by` from range selectors, so it needs no new vocabulary.
+The counted form follows the declaration pattern already established by `var:` and
+`change:var:`, so the counter is a properly declared variable — and its type and precision can be
+stated. That matters more here than elsewhere: **the loop counter is exactly the variable
+verification cares about**, since layer 1 evaluates the loop and layer 2 runs range analysis on
+it. `loop:var:+int 'i'` or a pinned width is useful, not decoration.
+
+The range needs its `math { }` like all other arithmetic — no exemption.
+
+Note `to` and `by` appear in two contexts where numbers are bare: inside `math { }`, and inside
+selectors (`('a'):1 to 100;`). Both are lexer modes; selector indices are always whole, so the
+decimal-point rule is unaffected.
+
+Rejected: a bare form (`loop 'i' 1 to 10`), which would be the only place a variable comes into
+existence without `var:`; and a range-as-value form (`loop 'i' in math { 1 to 10 }`), which needs
+a new `in` keyword.
+
+The condition form's spelling is still **OPEN**.
 
 The distinction matters more here than in most languages: **counted loops always terminate**, so
 layer 1 of verification can always evaluate them at compile time and layer 2 always converges.
