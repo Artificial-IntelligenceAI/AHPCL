@@ -58,7 +58,24 @@ is actionable. Currently "What the heck am I supposed to do?", and it needs code
 
 **13. Indexing syntax.** Discussion used `(a)[(i)]`, which clashes with `[…]` for calls.
 
-**14b. Function definitions and calls.** Nothing decided. Relates to #6 (whether `[…]` is how
+**14b. Function definitions.** ← *next up.* Three options were put to Tankun; no answer yet.
+
+- **1** — same pattern as everything else, parameters as ordinary declarations:
+  ```
+  func:num 'double' [var:num 'n'] {
+      handback math { ('n') x 2 }.
+  }.
+  ```
+  Reuses the whole declaration grammar for parameters — types, sign refinements, precision,
+  shapes, `,` to extend — with no new rules. Would also settle #17 (parameter precision: yes,
+  because parameters are declarations). Claude's recommendation.
+- **2** — return type after an arrow: `func 'double' [var:num 'n'] -> num { … }.` Familiar, reads
+  left-to-right; costs new punctuation and moves the type out of its usual position.
+- **3** — parameters without `var:`: `func:num 'double' [num 'n'] { … }.` Less typing; creates a
+  second declaration grammar.
+
+**14e. How is a function called?** `print[…]` is bare, but user names are quoted — so
+`double[('x')]`, `'double'[('x')]`, or `('double')[('x')]`? Relates to #6 (whether `[…]` is how
 all calls work).
 
 **14c. Confirm `,` extends a `change:`** — recorded as INFERRED from the language-wide comma
