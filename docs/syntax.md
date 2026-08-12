@@ -662,7 +662,33 @@ as `loop:while`, so `loop:var:` would only *look* bounded), and mutable-with-an-
 
 The counter does **not** outlive the loop — see Scoping above.
 
-**OPEN:** whether loops are expressions with a value the way conditionals are.
+### Loops produce arrays — **DECIDED**
+
+A loop is an expression. Each `handback` contributes **one element**, so a loop builds an array —
+what other languages call a comprehension:
+
+```
+var:vector:num 'squares' = loop:var:int 'i' = math { 1 to 10 } {
+    handback math { ('i') xx 2 }.
+}.
+→ {1, 4, 9, 16, 25, 36, 49, 64, 81, 100}
+```
+
+**The shape falls out for free.** `1 to 10` is ten iterations known at compile time, so the result
+is `vector [10]` — statically, with no analysis. A `loop:while` cannot be counted in advance, so it
+produces `vector [?]`. The two loop kinds map exactly onto the known and unknown shapes already in
+the type system.
+
+A body must `handback` on **every** iteration or **none**. Mixed would leave holes, and "sometimes
+an element" has no meaning under fixed shapes.
+
+Used as a statement with no `handback`, a loop simply produces nothing — the same way a
+conditional's value may be discarded.
+
+Rejected: statement-only loops, and producing just the final `handback` (which a variable does
+more clearly).
+
+**OPEN:** whether nesting loops builds higher-rank arrays.
 
 The distinction matters more here than in most languages: **counted loops always terminate**, so
 layer 1 of verification can always evaluate them at compile time and layer 2 always converges.
