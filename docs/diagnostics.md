@@ -92,9 +92,52 @@ the *greeting* was specified.
 
 **OPEN:** what separates consecutive errors.
 
-**OPEN:** whether errors may point at **more than one location**. Several already-decided errors
-are inherently two-place — a refinement violation is "this promise, made here, is broken by that
-assignment, over there" — and the template has one location slot.
+### Multiple locations — **DECIDED**
+
+One error may quote **more than one line**, each with its own marker and note. The header fields
+name the primary spot; the quoted section tells the whole story:
+
+```
+AHPCL Error Handler:
+Hello, I think that there's something wrong.
+main.ahpcl:3:11
+file: main.ahpcl
+line: 3
+column: 11
+
+     1 | var:+int 'n' = '10'.
+       |     ^^^^ 'n' promises to stay above 0 here
+     3 | set 'n' = math { ('n') - 20 }.
+       |           ^^^^^^^^^^^^^^^^^^ but this can make it -10
+
+rule conditions: a +int must be above 0 at every point in the program.
+suggest fix: declare 'n' as :int, or check the value before assigning.
+```
+
+Most AHPCL errors are about *relationships* — a refinement promised in one place and broken in
+another, a shape declared here and used there — which one location cannot express.
+
+**Implementation note:** an error must carry a *list* of locations from the start. Cheap now,
+irritating to retrofit.
+
+### Columns count grapheme clusters — **DECIDED**
+
+A column is one **user-perceived character**, not a byte and not a code point.
+
+| | Columns |
+|---|---|
+| `C` | 1 |
+| (space) | 1 |
+| `🧑‍🧑‍🧒‍🧒` | 1 |
+| `🧑‍🧑‍🧒‍🧒🧑‍🧑‍🧒‍🧒` | 2 |
+
+That family emoji is 4 people joined by 3 zero-width joiners — 7 code points, about 25 bytes,
+and **one** column. Rust's `unicode-segmentation` crate implements the relevant standard
+(UAX #29).
+
+**Known friction:** editors disagree. VS Code reports columns in UTF-16 code units, Vim in
+bytes. So `main.ahpcl:12:17` may not match the position an editor displays for the same spot.
+Unavoidable given the choice, and worth documenting for users rather than fixing.
 
 **OPEN:** error codes (`AHPCL-E0012`) for searchability; whether the Informer shares this
 template; machine-readable output for editors.
