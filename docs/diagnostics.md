@@ -135,9 +135,29 @@ That family emoji is 4 people joined by 3 zero-width joiners — 7 code points, 
 and **one** column. Rust's `unicode-segmentation` crate implements the relevant standard
 (UAX #29).
 
-**Known friction:** editors disagree. VS Code reports columns in UTF-16 code units, Vim in
-bytes. So `main.ahpcl:12:17` may not match the position an editor displays for the same spot.
-Unavoidable given the choice, and worth documenting for users rather than fixing.
+### Carets are drawn in display width — **DECIDED**
+
+Two measures, for two different jobs:
+
+| | Measure | Why |
+|---|---|---|
+| The column **number** | grapheme clusters | It is a *reference* — pasted into bug reports, read from CI logs, consumed by editors and machine-readable output, where no terminal exists. It must mean the same thing everywhere, forever. |
+| The **caret** `^^^` | display width (terminal cells) | It is a *picture* — its only job is to line up on the screen in front of you. |
+
+The two are never compared, so the seam is invisible to users. Cost is one extra Rust crate:
+`unicode-segmentation` (UAX #29) for grapheme counting, `unicode-width` (UAX #11) for cells.
+
+Rejected: display width for **both**. It would make caret alignment free, but column numbers
+would become a property of the *viewer* rather than the file — a tab is 4 columns or 8 depending
+on settings, `🧑‍🧑‍🧒‍🧒` is 2 cells or 8 depending on terminal emoji support, and `±` is 1 or 2
+depending on locale. The same file would report different columns in different terminals.
+
+Rejected: grapheme count for both, which keeps numbers exact but visibly misaligns every caret
+under emoji or CJK text.
+
+**Known friction:** editors disagree with grapheme columns anyway. VS Code reports columns in
+UTF-16 code units, Vim in bytes. So `main.ahpcl:12:17` may not match the position an editor
+displays. Unavoidable given the choice, and worth documenting for users rather than fixing.
 
 **OPEN:** error codes (`AHPCL-E0012`) for searchability; whether the Informer shares this
 template; machine-readable output for editors.
