@@ -602,9 +602,28 @@ Rejected: `loop while …` (the two forms of one construct punctuated differentl
 `while` keyword (which would hide the fact that both are loops, and with it the verification
 distinction).
 
+### The counter is read-only — **DECIDED**
+
+```
+loop:var:int 'i' = math { 1 to 10 } {
+    change:var:int 'i' = '99'.        # ERROR
+}.
+```
+
+`loop:var:int 'i' = math { 1 to 10 }` therefore means **exactly ten iterations**, known before
+anything runs. That guarantee is the entire reason counted loops exist as a separate kind: it is
+what makes layer 1 compile-time evaluation safe and layer 2 range analysis trivially convergent.
+
+This is the one place in AHPCL where something is not mutable. Justification: "everything is
+mutable" is about variables *you* declare; a loop counter is closer to a value the loop hands you
+each time round.
+
+Rejected: making it mutable (which would collapse counted loops into the same unprovable category
+as `loop:while`, so `loop:var:` would only *look* bounded), and mutable-with-an-Informer-note
+(which makes the guarantee something to check rather than something structural).
+
 **OPEN:** whether loops are expressions with a value the way conditionals are; whether the
-counted loop's counter still exists after the loop ends; whether the counter may be changed
-inside the body.
+counter still exists after the loop ends — see scoping, below.
 
 The distinction matters more here than in most languages: **counted loops always terminate**, so
 layer 1 of verification can always evaluate them at compile time and layer 2 always converges.
