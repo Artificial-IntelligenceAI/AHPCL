@@ -193,8 +193,41 @@ under emoji or CJK text.
 UTF-16 code units, Vim in bytes. So `main.ahpcl:12:17` may not match the position an editor
 displays. Unavoidable given the choice, and worth documenting for users rather than fixing.
 
-**OPEN:** error codes (`AHPCL-E0012`) for searchability; whether the Informer shares this
-template; machine-readable output for editors.
+### Error codes — **DECIDED**
+
+Category plus a **4-digit** number, shown inline:
+
+```
+main.ahpcl:3:11  [AHPCL-SIGN-0001]
+```
+
+The category carries meaning and never needs changing; the number carries stability. A bare
+serial (`E0012`) would be stable but meaningless; a full mnemonic (`SHAPE-MISMATCH`) would be
+meaningful but tempting to reword — and surviving rewording is the whole reason codes exist.
+
+Codes are **never reused**, so the list only grows.
+
+Categories and the errors decided so far:
+
+| Code | Error |
+|---|---|
+| `AHPCL-LEX-0001` | comment line-count runs past end of file |
+| `AHPCL-LEX-0002` | unexpected character `−` (U+2212) — did you mean `-`? |
+| `AHPCL-TYPE-0001` | numeric literal with nothing to pin its type |
+| `AHPCL-PREC-0001` | precision unstated and not knowable at compile time |
+| `AHPCL-PREC-0002` | `infnum` given an explicit width |
+| `AHPCL-PREC-0003` | `deci` given a width that is not an IEEE decimal format |
+| `AHPCL-PREC-0004` | overflow |
+| `AHPCL-SIGN-0001` | a sign refinement cannot be proven |
+| `AHPCL-SHAPE-0001` | inner dimensions disagree for `·` |
+| `AHPCL-SHAPE-0002` | rank name disagrees with the shape |
+| `AHPCL-SHAPE-0003` | array literal disagrees with the declared shape |
+| `AHPCL-NAME-0001` | no variable of that name |
+
+**PROPOSED:** `ahpcl explain AHPCL-SIGN-0001` for a longer write-up of the rule — the natural
+companion to codes, and a good fit for errors meant to teach.
+
+**OPEN:** whether the Informer shares this template; machine-readable output for editors.
 
 ## Errors decided so far
 
