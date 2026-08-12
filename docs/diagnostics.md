@@ -87,10 +87,44 @@ The repetition is **deliberate**: `file:line:col` is the compact form editors an
 click on, and the three spelled-out fields beneath are a **legend** teaching you how to read it.
 Not redundancy — do not "tidy" it away.
 
-**OPEN:** whether the `AHPCL Error Handler:` header also appears only once, or per error — only
-the *greeting* was specified.
+### Multiple errors — **DECIDED**
 
-**OPEN:** what separates consecutive errors.
+The `AHPCL Error Handler:` header and the greeting appear **once**, at the top. Errors are
+numbered, separated by a blank line, and followed by a closing count.
+
+**Grammar varies with the count** — three things change:
+
+| | One error | Two or more |
+|---|---|---|
+| Greeting | "there's something wrong." | "there are some things wrong." |
+| Numbering | omitted | `Error 1 of 3` before each |
+| Closing | `1 error found.` | `3 errors found.` |
+
+```
+AHPCL Error Handler:
+Hello, I think that there are some things wrong.
+
+Error 1 of 3
+main.ahpcl:3:11
+file: main.ahpcl
+line: 3
+column: 11
+
+     3 | set 'n' = math { ('n') - 20 }.
+       |           ^^^^^^^^^^^^^^^^^^ this can make it -10
+
+rule conditions: a +int must be above 0 at every point in the program.
+suggest fix: declare 'n' as :int, or check the value before assigning.
+
+Error 2 of 3
+main.ahpcl:20:5
+…
+
+3 errors found.
+```
+
+The count appears **both** before reading (via `of 3`) and after (via the closing line), so the
+scale is known immediately and confirmed at the end.
 
 ### Multiple locations — **DECIDED**
 
