@@ -227,7 +227,29 @@ Categories and the errors decided so far:
 **PROPOSED:** `ahpcl explain AHPCL-SIGN-0001` for a longer write-up of the rule — the natural
 companion to codes, and a good fit for errors meant to teach.
 
-**OPEN:** whether the Informer shares this template; machine-readable output for editors.
+**OPEN:** machine-readable output for editors.
+
+## Informer format — **DECIDED**
+
+The Informer does **not** use the error template. One line per note:
+
+```
+AHPCL Informer:
+informer: main.ahpcl:7:5 — 'x' widened to 32-bit because of line 12
+informer: main.ahpcl:4:1 — loop evaluated at compile time (99 iterations); +int on 'n' verified
+informer: main.ahpcl:9:3 — +int on 'n' unproven; runtime check inserted
+```
+
+Same header convention and the same `file:line:col` locations, so it reads as the same family —
+sized for its volume rather than matching the error layout.
+
+**The reason is volume.** Errors are rare, so ten lines each is affordable. The Informer is on
+by default at full detail and reports *every* default and inference, so a 200-line program can
+produce hundreds of notes. At ten lines apiece that is thousands of lines of output for a
+*successful* compile. Its job is to be glanceable: skim, spot the surprising line, go look.
+
+**PROPOSED, easy to add later:** `flag:informer = full` to expand notes into the structured
+error layout when investigating one specifically.
 
 ## Errors decided so far
 

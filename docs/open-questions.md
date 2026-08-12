@@ -31,11 +31,11 @@ name, and nothing decided about text as a value. See [types.md](types.md).
 
 ---
 
-## Awaiting the sample Tankun offered
+## Diagnostics
 
-**2. The error message template.** See [diagnostics.md](diagnostics.md) for what it needs to
-settle: error codes, source excerpts and labels, suggestion lines, placement relative to
-Informer output.
+**2. Machine-readable diagnostics** (JSON for editors) — the last open item in
+[diagnostics.md](diagnostics.md). Everything else about the Error Handler and Informer is
+decided.
 
 ---
 
