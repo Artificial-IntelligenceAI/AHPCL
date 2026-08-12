@@ -20,22 +20,23 @@ inline, always.
 What it reports, gathered from the decisions made so far:
 
 ```
-informer: 'x' widened to 32-bit because of line 7
-informer: 'n' is mutable; +int refinement tracked across 3 assignments (lines 4, 9, 12)
-informer: line 4  — loop evaluated at compile time (99 iterations); +int on 'n' verified
-informer: line 12 — range analysis proved 'n' ∈ [1, 100]; +int verified
-informer: line 20 — +int on 'n' unproven; runtime check inserted
+AHPCL Informer:
+informer: main.ahpcl:7:5  — 'x' widened to 32-bit because of line 12
+informer: main.ahpcl:4:1  — 'n' is mutable; +int tracked across 3 assignments (lines 4, 9, 12)
+informer: main.ahpcl:4:1  — loop evaluated at compile time (99 iterations); +int on 'n' verified
+informer: main.ahpcl:12:3 — range analysis proved 'n' ∈ [1, 100]; +int verified
+informer: main.ahpcl:20:7 — +int on 'n' unproven; runtime check inserted
 ```
 
 Live progress during compile-time evaluation, rate-limited to roughly every 250 ms, with a
 skip command and a closing timing report:
 
 ```
-informer: line 12 — evaluating loop at compile time...
+informer: main.ahpcl:12:3 — evaluating loop at compile time...
           1,240,000 iterations · 3.2s elapsed
           skip with: ahpcl task:build. flag:loop-evaluation = limit.
 
-informer: line 12 — loop evaluated at compile time
+informer: main.ahpcl:12:3 — loop evaluated at compile time
           8,400,000 iterations · 21.4s · +int on 'n' verified
 
 informer: compile-time evaluation took 21.4s of 24.1s total

@@ -9,12 +9,14 @@ trade-offs first, then a single question.
 
 ## Arrays — model B chosen, details outstanding
 
+**1k. What else may `nna` hold** besides text (booleans? dates?), may one `nna` mix kinds, does
+it have a rank, and does the summing rule make bare `('names')` concatenate?
+
 **1a. Does `dyn` prefix every array type name** (`dynvector`, `dyntensor`)? And should
 `dyntensor` mean *unknown rank* — a distinction `?` notation cannot express — rather than being
 a pure synonym for `[?, ?]`?
 
-**1c. May the shape be omitted when a literal determines it?** `var:matrix:num 'm' = {{'1','2'},{'3','4'}}.`
-is unambiguously `[2, 2]`, and precision already works this way. Also: how is an empty array written?
+**1c. How is an empty array written?** (Shape-may-be-omitted is decided — a literal determines it.)
 
 **1g. Is `tensor` legal at rank 1 or 2**, or strictly rank 3 and above?
 
@@ -22,12 +24,6 @@ is unambiguously `[2, 2]`, and precision already works this way. Also: how is an
 
 **1i. Do selectors double as general indexing?** Would settle #13, the `(a)[(i)]` clash with
 call brackets.
-
-**1j. Is there a text type at all?** Strings appear only as `print` arguments so far — no type
-name, and nothing decided about text as a value. See [types.md](types.md).
-
-**1d. Resolved by the summing rule** — `math { (a) x (b) }` is sum(a) × sum(b), and
-`math { (a):all; x (b):all; }` is elementwise, identical to `⊙`.
 
 ---
 
@@ -56,7 +52,9 @@ any string context?
 
 **8. Does `\` escape outside strings** too?
 
-**11. Rewrite the temporary comment-overrun error message** once the Error Handler template exists — currently "What the heck am I supposed to do?"
+**11. Rewrite the temporary comment-overrun error message** — the template now exists, so this
+is actionable. Currently "What the heck am I supposed to do?", and it needs code
+`AHPCL-LEX-0001`.
 
 **13. Indexing syntax.** Discussion used `(a)[(i)]`, which clashes with `[…]` for calls.
 
