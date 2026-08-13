@@ -1170,6 +1170,9 @@ same source produce different results depending on how it was compiled — every
 only *how* compilation happens, never what the program computes. A file-level directive was also
 rejected: a call's behaviour would depend on a line possibly hundreds of lines away.
 
+Implemented: `trim`, `scientific`, `hex`, `unicode-digits`, `group:` and `decimal:`.
+`unicode-digits` covers Thai, Arabic-Indic, Devanagari and the other standard decimal blocks.
+
 **OPEN, deferred:** `binary`/`octal`, an `allow-empty` for blank fields, and a `percent` reading
 `"50%"` as 0.5 — which would finally use the `%` kept free from `mod`.
 

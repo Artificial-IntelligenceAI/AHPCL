@@ -258,15 +258,23 @@ impl Parser {
         self.expect(TokenKind::Colon, "':' after 'var'", "write change:var:num 'x' = '2'.")
             .then_some(())?;
         let ty = self.type_ref()?;
-        let (name, name_span) = self.quoted_name("the variable being changed")?;
-        let selectors = self.selectors();
 
-        self.expect(TokenKind::Equals, "'=' before the new value", "write change:var:num 'x' = '2'.")
-            .then_some(())?;
-        let value = self.expression()?;
+        let mut targets = Vec::new();
+        loop {
+            let (name, name_span) = self.quoted_name("the variable being changed")?;
+            let selectors = self.selectors();
+            self.expect(TokenKind::Equals, "'=' before the new value", "write change:var:num 'x' = '2'.")
+                .then_some(())?;
+            let value = self.expression()?;
+            targets.push(ChangeTarget { name, name_span, selectors, value });
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+
         let span = start.to(self.peek().span);
         self.expect(TokenKind::Dot, "'.' to end the statement", "add a '.'.");
-        Some(ChangeStmt { ty, name, name_span, selectors, value, span })
+        Some(ChangeStmt { ty, targets, span })
     }
 
     /// `func:TYPE 'name' [params] { body }.`
@@ -856,7 +864,7 @@ impl Parser {
                 }
                 if BUILTINS.contains(&w.as_str()) {
                     self.advance();
-                    let args = self.call_args()?;
+                    let args = self.builtin_args()?;
                     let full = span.to(self.peek().span);
                     return Some(Expr { kind: ExprKind::Builtin { name: w, args }, span: full });
                 }
@@ -959,6 +967,44 @@ impl Parser {
             indices.push(self.binary_expr(1)?);
         }
         Some(Selector::Indices(indices))
+    }
+
+    /// Builtin arguments, which may include bare option words: `parse[('t') trim]`
+    /// and `parse[('t') group:"," decimal:"."]`.
+    fn builtin_args(&mut self) -> Option<Vec<Expr>> {
+        if !self.expect(TokenKind::LBracket, "'[' to open the arguments", "add a '['.") {
+            return None;
+        }
+        let mut args = Vec::new();
+        while !matches!(self.peek_kind(), TokenKind::RBracket) && !self.at_end() {
+            let before = self.pos;
+            let span = self.peek().span;
+
+            // A bare word here is an option, not a value — values are quoted.
+            if let Some(word) = self.peek().word().map(str::to_string) {
+                if constant_from_word(&word).is_none() {
+                    self.advance();
+                    let value = if self.eat(&TokenKind::Colon) {
+                        Some(Box::new(self.primary_expr()?))
+                    } else {
+                        None
+                    };
+                    let full = span.to(self.peek().span);
+                    args.push(Expr { kind: ExprKind::Option { name: word, value }, span: full });
+                    continue;
+                }
+            }
+
+            match self.expression() {
+                Some(e) => args.push(e),
+                None => break,
+            }
+            if self.pos == before {
+                self.advance();
+            }
+        }
+        self.expect(TokenKind::RBracket, "']' to close the arguments", "add a ']'.");
+        Some(args)
     }
 
     /// `[a b c]` — space-separated, no commas.

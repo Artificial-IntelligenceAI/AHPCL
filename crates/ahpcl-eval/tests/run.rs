@@ -497,3 +497,81 @@ fn a_loop_whose_handbacks_disagree_on_shape_is_an_error_not_a_panic() {
                print[('m')].";
     assert_eq!(fails(src), "AHPCL-RUN-0001");
 }
+
+#[test]
+fn parse_options_are_honoured() {
+    assert_eq!(one("var:deci 'a' = parse[\" 42 \" trim].\nprint[('a')]."), "42");
+    assert_eq!(one("var:deci 'a' = parse[\"1e5\" scientific].\nprint[('a')]."), "100000");
+    assert_eq!(one("var:int 'a' = parse[\"0x2A\" hex].\nprint[('a')]."), "42");
+    assert_eq!(one("var:int 'a' = parse[\"๔๒\" unicode-digits].\nprint[('a')]."), "42");
+}
+
+#[test]
+fn stating_the_convention_removes_the_thousands_ambiguity() {
+    // "1,000" means one thousand in Britain and one in Germany. Saying which is which
+    // is how the ambiguity is removed rather than guessed at.
+    assert_eq!(
+        one("var:deci 'a' = parse[\"1,000.5\" group:\",\" decimal:\".\"].\nprint[('a')]."),
+        "1000.5"
+    );
+    assert_eq!(
+        one("var:deci 'a' = parse[\"1.000,5\" group:\".\" decimal:\",\"].\nprint[('a')]."),
+        "1000.5"
+    );
+}
+
+#[test]
+fn nna_holds_text_without_being_summed() {
+    assert_eq!(
+        one("var:nna 'names' = {\"hello\", \"John Doe\"}.\nprint[('names')]."),
+        "{hello, John Doe}"
+    );
+}
+
+#[test]
+fn a_comma_extends_a_change() {
+    assert_eq!(
+        one("var:int 'x' = '1', 'y' = '2'.\n\
+             change:var:int 'x' = '10', 'y' = '20'.\n\
+             print[('x')].\nprint[('y')]."),
+        "10\n20"
+    );
+}
+
+#[test]
+fn a_matrix_times_a_vector_gives_a_vector() {
+    assert_eq!(
+        one("var:matrix:int 'm' [2, 3] = {{'1','2','3'},{'4','5','6'}}.\n\
+             var:vector:int 'v' [3] = {'1','1','1'}.\n\
+             var:vector:int 'r' [2] = math { ('m') · ('v') }.\n\
+             print[('r')]."),
+        "{6, 15}"
+    );
+}
+
+#[test]
+fn constants_are_exact_rather_than_computed_from_a_float() {
+    // An f64 carries about 16 significant digits; beyond that it was noise.
+    assert_eq!(
+        one("var:infnum 'a' [30 digits] = math { pi }.\nprint[('a')]."),
+        "3.14159265358979323846264338328"
+    );
+}
+
+#[test]
+fn square_roots_are_exact_to_the_digits_asked_for() {
+    // √2 = 1.41421356237309504880168872420969807…
+    assert_eq!(
+        one("var:deci 'a' [128 bit] = math { sqrt 2 }.\nprint[('a')]."),
+        "1.414213562373095048"
+    );
+}
+
+#[test]
+fn a_declared_decimal_width_limits_the_digits() {
+    // decimal32 holds 7 significant digits, so that is what it shows.
+    assert_eq!(
+        one("var:deci 'a' [32 bit] = math { sqrt 2 }.\nprint[('a')]."),
+        "1.4142135"
+    );
+}

@@ -129,14 +129,43 @@ fn a_change_restates_the_type() {
     let p = program("change:var:num 'x' = '2000'.");
     let Stmt::Change(c) = &p.statements[0] else { panic!() };
     assert_eq!(c.ty.base, "num");
-    assert_eq!(c.name, "x");
+    assert_eq!(c.targets[0].name, "x");
 }
 
 #[test]
 fn a_change_may_target_one_element() {
     let p = program("change:var:num 'a':3; = '99'.");
     let Stmt::Change(c) = &p.statements[0] else { panic!() };
-    assert_eq!(c.selectors.len(), 1);
+    assert_eq!(c.targets[0].selectors.len(), 1);
+}
+
+#[test]
+fn a_comma_extends_a_change_like_every_other_statement() {
+    let p = program("change:var:int 'x' = '1', 'y' = '2'.");
+    let Stmt::Change(c) = &p.statements[0] else { panic!() };
+    assert_eq!(c.targets.len(), 2);
+    assert_eq!(c.targets[0].name, "x");
+    assert_eq!(c.targets[1].name, "y");
+}
+
+#[test]
+fn builtin_options_are_words_not_values() {
+    let p = program("var:deci 'a' = parse[\" 42 \" trim].");
+    let Stmt::Var(v) = &p.statements[0] else { panic!() };
+    let ExprKind::Builtin { args, .. } = &v.bindings[0].value.as_ref().unwrap().kind else {
+        panic!()
+    };
+    assert!(matches!(&args[1].kind, ExprKind::Option { name, value: None } if name == "trim"));
+}
+
+#[test]
+fn builtin_options_may_carry_a_value() {
+    let p = program("var:deci 'a' = parse[\"1,000\" group:\",\"].");
+    let Stmt::Var(v) = &p.statements[0] else { panic!() };
+    let ExprKind::Builtin { args, .. } = &v.bindings[0].value.as_ref().unwrap().kind else {
+        panic!()
+    };
+    assert!(matches!(&args[1].kind, ExprKind::Option { name, value: Some(_) } if name == "group"));
 }
 
 // ── precedence, the part most likely to be wrong ─────────────────────────────

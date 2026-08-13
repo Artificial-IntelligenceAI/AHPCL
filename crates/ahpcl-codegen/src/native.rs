@@ -252,15 +252,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(false)
             }
             Stmt::Change(c) => {
-                if !c.selectors.is_empty() {
-                    return Err(Unsupported::new("writing to an array element"));
-                }
                 let native = native_base(&c.ty)?;
-                let val = self.expr(&c.value, native)?;
-                let Some(slot) = self.lookup(&c.name) else {
-                    return Err(Unsupported::new(format!("changing unknown '{}'", c.name)));
-                };
-                self.builder.build_store(slot, val).unwrap();
+                for target in &c.targets {
+                    if !target.selectors.is_empty() {
+                        return Err(Unsupported::new("writing to an array element"));
+                    }
+                    let val = self.expr(&target.value, native)?;
+                    let Some(slot) = self.lookup(&target.name) else {
+                        return Err(Unsupported::new(format!("changing unknown '{}'", target.name)));
+                    };
+                    self.builder.build_store(slot, val).unwrap();
+                }
                 Ok(false)
             }
             Stmt::Print { args, .. } => {
@@ -564,6 +566,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             ExprKind::Constant(_) => Err(Unsupported::new("π, e and τ")),
             ExprKind::Str(_) => Err(Unsupported::new("text values")),
             ExprKind::Range { .. } => Err(Unsupported::new("a range outside a loop")),
+            ExprKind::Option { .. } => Err(Unsupported::new("builtin options")),
         }
     }
 

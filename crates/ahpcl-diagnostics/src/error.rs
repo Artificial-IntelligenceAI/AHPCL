@@ -102,11 +102,31 @@ impl Error {
     }
 }
 
+/// Drop repeats of the same message at the same place.
+///
+/// One mistake often trips several checks; showing it five times buries the cause.
+fn deduplicate(errors: &[Error]) -> Vec<&Error> {
+    let mut seen: Vec<(usize, u16, &str)> = Vec::new();
+    let mut out = Vec::new();
+    for e in errors {
+        let key = (e.primary.start.0, e.code.number, e.rule_conditions.as_str());
+        if seen.contains(&key) {
+            continue;
+        }
+        seen.push(key);
+        out.push(e);
+    }
+    out
+}
+
 /// Renders a batch of errors as one report.
 pub fn render(source: &SourceFile, errors: &[Error]) -> String {
     if errors.is_empty() {
         return String::new();
     }
+
+    let errors = deduplicate(errors);
+    let errors = errors.as_slice();
 
     let mut out = String::new();
     let many = errors.len() > 1;
@@ -256,6 +276,22 @@ mod tests {
         // Both source lines are quoted.
         assert!(out.contains("var:+int 'n' = '10'."));
         assert!(out.contains("change:var:int 'n'"));
+    }
+
+    #[test]
+    fn repeats_of_the_same_message_at_the_same_place_are_dropped() {
+        // One mistake often trips several checks; showing it five times buries the cause.
+        let one = || Error::new(Code::new(Category::Syn, 1), Span::new(0, 3), "same", "fix");
+        let out = render(&src(), &[one(), one(), one()]);
+        assert!(out.contains("1 error found."), "{out}");
+    }
+
+    #[test]
+    fn genuinely_different_errors_are_all_kept() {
+        let a = Error::new(Code::new(Category::Syn, 1), Span::new(0, 3), "first", "fix");
+        let b = Error::new(Code::new(Category::Syn, 1), Span::new(21, 24), "second", "fix");
+        let out = render(&src(), &[a, b]);
+        assert!(out.contains("2 errors found."), "{out}");
     }
 
     #[test]

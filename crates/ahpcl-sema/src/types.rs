@@ -244,6 +244,9 @@ pub fn from_type_ref(ty: &TypeRef, shape: Option<&Vec<Dim>>, precision: Option<&
             let n = rank.dimensions().unwrap_or(3);
             Some(Shape(vec![Dim::Unknown; n]))
         }
+        // `nna` is "non-numerical-array": it is an array by definition, so it carries a
+        // shape even when no rank name is written.
+        (None, None) if base == Base::Nna => Some(Shape(vec![Dim::Unknown])),
         (None, None) => None,
     };
     Some(Type {

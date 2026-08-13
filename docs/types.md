@@ -15,6 +15,21 @@ See [README.md](README.md) for the status legend.
 `rat` was added 2026-08-12, forced by division: `math { 1 / 3 }` has no exact decimal answer.
 Adding it widened `num` from "integers and decimals" to **any exact number**.
 
+### v1 implementation bounds — **not language decisions**
+
+Every exact type is backed by `i128`, so values are bounded at roughly 1.7 × 10³⁸. Within
+that range the arithmetic is genuinely exact: decimals are scaled integers, rationals are
+reduced fractions, powers and division use exact algorithms, and square roots are computed
+by integer Newton iteration rather than through floating point.
+
+Two consequences worth stating plainly:
+
+- **`infnum` is not yet unbounded.** It is exact and behaves correctly up to the `i128`
+  limit. A wider backend is a v1-stable concern.
+- **Irrationals have a digit ceiling.** π, e and τ are known to 36 decimal places; square
+  roots are computed to 18. Asking for more is an error rather than a silent approximation,
+  because computing them from an `f64` would be wrong past the 16th digit.
+
 ### The hierarchy — **DECIDED**
 
 ```

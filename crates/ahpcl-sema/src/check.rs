@@ -121,7 +121,15 @@ impl<'a> Checker<'a> {
 
             if let Some(value) = &binding.value {
                 if let Some(got) = self.expr(value, Some(&ty)) {
-                    self.require_fits(&got, &ty, value.span, "assigned");
+                    // A shape disagreement is reported by the shape check below, so
+                    // do not also report it as a type mismatch.
+                    let shape_only = got.base.fits_in(ty.base)
+                        && got.shape.is_some()
+                        && ty.shape.is_some()
+                        && !got.fits_in(&ty);
+                    if !shape_only {
+                        self.require_fits(&got, &ty, value.span, "assigned");
+                    }
                     // A literal may determine the shape when none was written.
                     if ty.shape.is_none() {
                         if let Some(shape) = got.shape.clone() {
@@ -163,49 +171,51 @@ impl<'a> Checker<'a> {
     fn change(&mut self, c: &ChangeStmt) {
         let Some(stated) = from_type_ref(&c.ty, None, None) else { return };
 
-        let Some(existing) = self.scopes.lookup(&c.name).cloned() else {
-            self.unknown_name(&c.name, c.name_span);
-            return;
-        };
+        for target in &c.targets {
+            let Some(existing) = self.scopes.lookup(&target.name).cloned() else {
+                self.unknown_name(&target.name, target.name_span);
+                continue;
+            };
 
-        if existing.read_only {
-            self.err(
-                E_READ_ONLY,
-                c.name_span,
-                format!("'{}' is a loop counter, which is read-only inside the body.", c.name),
-                "a counted loop runs a fixed number of times; use a separate variable.",
-            );
-            return;
-        }
+            if existing.read_only {
+                self.err(
+                    E_READ_ONLY,
+                    target.name_span,
+                    format!("'{}' is a loop counter, which is read-only inside the body.", target.name),
+                    "a counted loop runs a fixed number of times; use a separate variable.",
+                );
+                continue;
+            }
 
-        // The restated type is documentation for the reader, so it is verified.
-        // Documentation that can drift out of sync is worse than none.
-        let target = if c.selectors.is_empty() {
-            existing.ty.clone()
-        } else {
-            existing.ty.element()
-        };
+            // The restated type is documentation for the reader, so it is verified.
+            // Documentation that can drift out of sync is worse than none.
+            let want = if target.selectors.is_empty() {
+                existing.ty.clone()
+            } else {
+                existing.ty.element()
+            };
 
-        if stated.base != target.base || stated.sign != target.sign {
-            self.errors.push(
-                Error::new(
-                    E_TYPE_RESTATED,
-                    c.ty.span,
-                    format!(
-                        "'{}' is {}, but this says {}.",
-                        c.name,
-                        target.render(),
-                        stated.render()
-                    ),
-                    format!("write change:var:{} '{}' = … .", target.render(), c.name),
-                )
-                .with_label(existing.declared_at, "declared here")
-                .with_label(c.ty.span, "restated differently here"),
-            );
-        }
+            if stated.base != want.base || stated.sign != want.sign {
+                self.errors.push(
+                    Error::new(
+                        E_TYPE_RESTATED,
+                        c.ty.span,
+                        format!(
+                            "'{}' is {}, but this says {}.",
+                            target.name,
+                            want.render(),
+                            stated.render()
+                        ),
+                        format!("write change:var:{} '{}' = … .", want.render(), target.name),
+                    )
+                    .with_label(existing.declared_at, "declared here")
+                    .with_label(c.ty.span, "restated differently here"),
+                );
+            }
 
-        if let Some(got) = self.expr(&c.value, Some(&target)) {
-            self.require_fits(&got, &target, c.value.span, "assigned");
+            if let Some(got) = self.expr(&target.value, Some(&want)) {
+                self.require_fits(&got, &want, target.value.span, "assigned");
+            }
         }
     }
 
@@ -349,9 +359,26 @@ impl<'a> Checker<'a> {
             ExprKind::ArrayLit(items) => self.array_literal(items, e.span, expected),
             ExprKind::If(chain) => self.if_chain(chain, expected, None),
             ExprKind::Loop(l) => {
-                self.loop_stmt(l, expected.map(|t| t.element()).as_ref());
-                expected.cloned()
+                let elem = expected.map(|t| t.element());
+                self.loop_stmt(l, elem.as_ref());
+                // Each handback contributes one element, so the length comes from the
+                // range — "the shape falls out for free".
+                let outer = match &l.kind {
+                    LoopKind::Counted { range, .. } => loop_length(range),
+                    LoopKind::While { .. } => None,
+                };
+                let base = elem.as_ref().map(|t| t.base).unwrap_or(Base::Num);
+                let sign = elem.as_ref().and_then(|t| t.sign);
+                let mut dims = vec![outer.map(Dim::Known).unwrap_or(Dim::Unknown)];
+                // A nested loop gains a dimension.
+                if let Some(inner) = expected.and_then(|t| t.shape.as_ref()) {
+                    if inner.rank() > 1 {
+                        dims.extend(inner.0[1..].iter().cloned());
+                    }
+                }
+                Some(Type { base, sign, shape: Some(Shape(dims)), precision: None })
             }
+            ExprKind::Option { .. } => None,
             ExprKind::Range { from, to, by } => {
                 let want = Type::scalar(Base::Int);
                 self.expr(from, Some(&want));
@@ -673,10 +700,11 @@ impl<'a> Checker<'a> {
 
         match op {
             BinOp::Dot => {
-                // The dot product *is* matrix multiplication: the inner dimensions
-                // must agree.
+                // The dot product *is* matrix multiplication. A rank-1 operand acts as
+                // a row on the left and a column on the right, so the inner dimensions
+                // to compare differ by side.
                 let inner_a = sa.0.last().cloned();
-                let inner_b = sb.0.first().cloned();
+                let inner_b = if sb.rank() == 1 { sb.0.first().cloned() } else { sb.0.first().cloned() };
                 if let (Some(Dim::Known(x)), Some(Dim::Known(y))) = (&inner_a, &inner_b) {
                     if x != y {
                         self.err(
@@ -693,20 +721,21 @@ impl<'a> Checker<'a> {
                         return None;
                     }
                 }
-                if sa.rank() == 1 && sb.rank() == 1 {
-                    Some(Type::scalar(a.base.join(b.base)?))
-                } else {
-                    let dims = vec![
-                        sa.0.first().cloned().unwrap_or(Dim::Unknown),
-                        sb.0.last().cloned().unwrap_or(Dim::Unknown),
-                    ];
-                    Some(Type {
-                        base: a.base.join(b.base)?,
-                        sign: sign_mul(a.sign, b.sign),
-                        shape: Some(Shape(dims)),
-                        precision: None,
-                    })
-                }
+                let base = a.base.join(b.base)?;
+                let sign = sign_mul(a.sign, b.sign);
+                // vec·vec → a single number; mat·vec → vec; vec·mat → vec; mat·mat → mat.
+                let dims: Vec<Dim> = match (sa.rank(), sb.rank()) {
+                    (1, 1) => vec![],
+                    (_, 1) => vec![sa.0[0].clone()],
+                    (1, _) => vec![sb.0[sb.rank() - 1].clone()],
+                    _ => vec![sa.0[0].clone(), sb.0[sb.rank() - 1].clone()],
+                };
+                Some(Type {
+                    base,
+                    sign,
+                    shape: if dims.is_empty() { None } else { Some(Shape(dims)) },
+                    precision: None,
+                })
             }
             BinOp::Cross => {
                 let three = |s: &Shape| s.rank() == 1 && matches!(s.0[0], Dim::Known(3));
@@ -1115,6 +1144,18 @@ fn int_range(bits: u32, sign: Option<Sign>) -> (i128, i128) {
     }
 }
 
+/// How many iterations a counted loop runs, when its range is literal.
+fn loop_length(range: &Expr) -> Option<u64> {
+    let inner = match &range.kind {
+        ExprKind::Math(e) => e.as_ref(),
+        _ => range,
+    };
+    match &inner.kind {
+        ExprKind::Range { from, to, by } => range_length(from, to, by.as_deref()),
+        _ => None,
+    }
+}
+
 /// How many values a literal range covers, when its bounds are known.
 fn range_length(from: &Expr, to: &Expr, by: Option<&Expr>) -> Option<u64> {
     let literal = |e: &Expr| -> Option<i64> {
@@ -1153,18 +1194,46 @@ fn is_bare_ref(e: &Expr) -> bool {
 }
 
 fn widening_hint(got: &Type, want: &Type) -> String {
+    // A shape disagreement is not about width, so say so rather than talking about
+    // narrower and wider types.
+    match (&got.shape, &want.shape) {
+        (Some(a), Some(b)) if !a.agrees_with(b) => {
+            return format!("the shapes {} and {} do not agree.", a.render(), b.render());
+        }
+        (Some(a), None) => {
+            return format!(
+                "this is an array of {}, but a single value was expected. A bare reference sums; use :all; to keep it an array.",
+                a.render()
+            );
+        }
+        (None, Some(b)) => {
+            return format!("a single value cannot fill an array of {}.", b.render());
+        }
+        _ => {}
+    }
+
     if want.sign.is_some() && got.sign.is_none() {
         format!(
-            "a {} might be negative, so it cannot satisfy {}. Declare it {} instead.",
-            got.base.name(),
+            "{} might be negative, so it cannot satisfy {}. Declare it {} instead.",
+            article(got.base.name()),
             want.render(),
             want.render()
         )
     } else if got.base.is_numeric() && want.base.is_numeric() {
-        format!("a {} is wider than {}. Narrower types pass into wider ones, never the reverse.", got.base.name(), want.render())
+        format!(
+            "{} is wider than {}. Narrower types pass into wider ones, never the reverse.",
+            article(got.base.name()),
+            want.render()
+        )
     } else {
         "check the declared type.".to_string()
     }
+}
+
+/// "an int", "a deci".
+fn article(word: &str) -> String {
+    let vowel = word.starts_with(['a', 'e', 'i', 'o', 'u']);
+    format!("{} {word}", if vowel { "an" } else { "a" })
 }
 
 /// Whether every path through a block hands a value back.

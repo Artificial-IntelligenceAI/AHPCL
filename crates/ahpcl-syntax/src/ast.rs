@@ -210,6 +210,8 @@ pub enum ExprKind {
     Loop(Box<LoopStmt>),
     /// `a to b by c`, outside a selector.
     Range { from: Box<Expr>, to: Box<Expr>, by: Option<Box<Expr>> },
+    /// An option in a builtin call — `trim`, or `group:","`. Not a value.
+    Option { name: String, value: Option<Box<Expr>> },
 }
 
 // ── statements ──────────────────────────────────────────────────────────────
@@ -232,13 +234,19 @@ pub struct VarDecl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ChangeStmt {
-    pub ty: TypeRef,
+pub struct ChangeTarget {
     pub name: String,
     pub name_span: Span,
     /// A selector on the left writes to one element.
     pub selectors: Vec<Selector>,
     pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChangeStmt {
+    pub ty: TypeRef,
+    /// `,` extends, so one statement may change several variables of the same type.
+    pub targets: Vec<ChangeTarget>,
     pub span: Span,
 }
 

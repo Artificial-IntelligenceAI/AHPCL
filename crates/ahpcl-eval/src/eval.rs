@@ -12,6 +12,8 @@ use std::collections::HashMap;
 
 use ahpcl_diagnostics::{Category, Code, Error, Span};
 use ahpcl_syntax::ast::*;
+#[allow(unused_imports)]
+use ahpcl_syntax::ast::Precision;
 
 use crate::value::{Array, Decimal, Rational, Value};
 
@@ -160,11 +162,14 @@ impl<'a> Interpreter<'a> {
             Stmt::Var(v) => {
                 for b in &v.bindings {
                     if let Some(value) = &b.value {
-                        let hint = numeric_hint(&v.ty);
+                        let hint = numeric_hint_with(&v.ty, b.precision.as_ref());
                         let val = self.expr(value, hint)?;
                         // A bare array reference sums its elements — that holds when
                         // assigning to a scalar, not only inside arithmetic.
-                        let val = if v.ty.rank.is_none() {
+                        // `nna` is an array by definition, so it has no rank name but
+                        // is still not a scalar — nothing to reduce.
+                        let scalar_target = v.ty.rank.is_none() && v.ty.base != "nna";
+                        let val = if scalar_target {
                             let span = value.span;
                             try_reduce_array(val).ok_or_else(|| self.sum_overflowed(span))?
                         } else {
@@ -179,11 +184,13 @@ impl<'a> Interpreter<'a> {
             }
             Stmt::Change(c) => {
                 let hint = numeric_hint(&c.ty);
-                let val = self.expr(&c.value, hint)?;
-                if c.selectors.is_empty() {
-                    self.assign(&c.name, val);
-                } else {
-                    self.assign_element(c, val)?;
+                for target in &c.targets {
+                    let val = self.expr(&target.value, hint)?;
+                    if target.selectors.is_empty() {
+                        self.assign(&target.name, val);
+                    } else {
+                        self.assign_element(c, target, val)?;
+                    }
                 }
                 Ok(Flow::Normal)
             }
@@ -213,7 +220,13 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn assign_element(&mut self, c: &'a ChangeStmt, val: Value) -> Result<(), Error> {
+    fn assign_element(
+        &mut self,
+        _c: &'a ChangeStmt,
+        target: &'a ChangeTarget,
+        val: Value,
+    ) -> Result<(), Error> {
+        let c = target;
         let mut indices = Vec::new();
         for sel in &c.selectors {
             if let Selector::Indices(items) = sel {
@@ -360,12 +373,19 @@ impl<'a> Interpreter<'a> {
             ExprKind::Number(text) => Ok(literal_value(text, hint)),
             ExprKind::Str(s) => Ok(Value::Str(s.clone())),
             ExprKind::Constant(c) => {
-                let v = match c {
-                    Constant::Pi => std::f64::consts::PI,
-                    Constant::E => std::f64::consts::E,
-                    Constant::Tau => std::f64::consts::TAU,
-                };
-                Ok(Value::Deci(Decimal::from_f64(v, 15)))
+                let want = digits_of(hint);
+                if want > CONSTANT_DIGITS {
+                    return Err(self.err(
+                        E_OVERFLOW,
+                        e.span,
+                        format!(
+                            "AHPCL knows this constant to {CONSTANT_DIGITS} decimal places; \
+                             {want} were asked for."
+                        ),
+                        format!("ask for at most {CONSTANT_DIGITS} digits."),
+                    ));
+                }
+                Ok(Value::Deci(constant_value(*c, want)))
             }
             ExprKind::Math(inner) => self.expr(inner, hint),
             ExprKind::Ref { name, selectors } => {
@@ -466,6 +486,7 @@ impl<'a> Interpreter<'a> {
                 }
                 Ok(Value::Array(Array { items: flat, shape }))
             }
+            ExprKind::Option { .. } => Ok(Value::Nothing),
             ExprKind::Range { .. } => Err(self.err(
                 E_RUNTIME,
                 e.span,
@@ -542,26 +563,29 @@ impl<'a> Interpreter<'a> {
                     Some(a) => self.expr(a, None)?.to_string(),
                     None => String::new(),
                 };
-                let options: Vec<String> = args[1..]
-                    .iter()
-                    .filter_map(|a| match &a.kind {
-                        ExprKind::Ref { name, .. } => Some(name.clone()),
-                        ExprKind::Literal(v) => Some(v.clone()),
-                        _ => None,
-                    })
-                    .collect();
-                let candidate = if options.iter().any(|o| o == "trim") {
-                    text.trim()
-                } else {
-                    text.as_str()
-                };
-                match Decimal::parse(candidate) {
+                let mut options = ParseOptions::default();
+                for arg in &args[1..] {
+                    if let ExprKind::Option { name, value } = &arg.kind {
+                        let literal = match value.as_deref() {
+                            Some(v) => match &v.kind {
+                                ExprKind::Str(s) => Some(s.clone()),
+                                ExprKind::Literal(s) => Some(s.clone()),
+                                _ => None,
+                            },
+                            None => None,
+                        };
+                        options.set(name, literal.as_deref());
+                    }
+                }
+                let candidate = options.normalise(&text);
+                match options.parse_number(&candidate) {
                     Some(d) => Ok(coerce(Value::Deci(d), hint)),
                     None => Err(self.err(
                         E_PARSE,
                         span,
-                        format!("{candidate:?} is not a number AHPCL can read."),
-                        "parse is strict by default; add trim for surrounding spaces.",
+                        format!("{text:?} is not a number AHPCL can read."),
+                        "parse is strict by default; add trim, scientific, hex, unicode-digits, \
+                         or group:\",\" decimal:\".\" as needed.",
                     )),
                 }
             }
@@ -1022,7 +1046,7 @@ impl<'a> Interpreter<'a> {
         // Division follows the context: rat where exactness was asked for, decimal
         // otherwise. Both paths are exact — no f64 anywhere.
         if op == Div {
-            if let Some(Numeric::Rat) = hint {
+            if hint.map(|h| h.is(Family::Rat)).unwrap_or(false) {
                 let (x, y) = (to_rational(&a, span)?, to_rational(&b, span)?);
                 let r = x.div(y).ok_or_else(|| {
                     self.err(E_DIV_ZERO, span, "division by zero.", "check the divisor.")
@@ -1033,7 +1057,7 @@ impl<'a> Interpreter<'a> {
                 to_decimal(&a).ok_or_else(|| self.not_a_number(&a, span))?,
                 to_decimal(&b).ok_or_else(|| self.not_a_number(&b, span))?,
             );
-            let d = x.div_exact(y, 15).ok_or_else(|| {
+            let d = x.div_exact(y, digits_of(hint)).ok_or_else(|| {
                 if y.is_zero() {
                     self.err(E_DIV_ZERO, span, "division by zero.", "check the divisor.")
                 } else {
@@ -1068,7 +1092,7 @@ impl<'a> Interpreter<'a> {
                         e if e.scale == 0 && e.mantissa >= 0 && e.mantissa <= u32::MAX as i128 => {
                             x.pow_int(e.mantissa as u32)
                         }
-                        _ => Decimal::from_f64_checked(x.to_f64().powf(y.to_f64()), 15),
+                        _ => Decimal::from_f64_checked(x.to_f64().powf(y.to_f64()), digits_of(hint)),
                     },
                     Mod => x.rem(y),
                     _ => None,
@@ -1231,11 +1255,10 @@ impl<'a> Interpreter<'a> {
             _ => {
                 // sqrt, sin, cos, tan, log, ln — usually irrational, so the result is a
                 // rounded decimal. The Informer reports the rounding at check time.
-                let f = try_reduce_array(v)
-                    .and_then(|r| r.to_f64())
-                    .ok_or_else(|| {
-                        self.err(E_RUNTIME, span, "this operation needs a number.", "check the operand.")
-                    })?;
+                let reduced = try_reduce_array(v).ok_or_else(|| self.sum_overflowed(span))?;
+                let f = reduced.to_f64().ok_or_else(|| {
+                    self.err(E_RUNTIME, span, "this operation needs a number.", "check the operand.")
+                })?;
                 if op == UnOp::Sqrt && f < 0.0 {
                     return Err(self.err(
                         E_RUNTIME,
@@ -1243,6 +1266,31 @@ impl<'a> Interpreter<'a> {
                         "square root of a negative number is not a real number.",
                         "check the operand, or take the absolute value first.",
                     ));
+                }
+
+                // Square root is computed exactly on integers rather than through f64,
+                // which only carries about 16 significant digits.
+                if op == UnOp::Sqrt {
+                    let want = digits_of(hint);
+                    let operand = to_decimal(&reduced).ok_or_else(|| {
+                        self.err(E_RUNTIME, span, "square root needs a number.", "check the operand.")
+                    })?;
+                    let exact = operand.sqrt_to(want.min(SQRT_MAX_DIGITS)).ok_or_else(|| {
+                        self.err(
+                            E_OVERFLOW,
+                            span,
+                            format!(
+                                "AHPCL computes square roots to at most {SQRT_MAX_DIGITS} decimal places."
+                            ),
+                            "ask for fewer digits.",
+                        )
+                    })?;
+                    let normalised = exact.normalised();
+                    // An exact root stays exact: √9 is 3, not 3.000000001.
+                    if normalised.scale == 0 && !hint.map(|h| h.is(Family::Deci)).unwrap_or(false) {
+                        return Ok(Value::Int(normalised.mantissa));
+                    }
+                    return Ok(Value::Deci(normalised));
                 }
                 let out = match op {
                     UnOp::Sqrt => f.sqrt(),
@@ -1254,30 +1302,226 @@ impl<'a> Interpreter<'a> {
                     _ => f,
                 };
                 // An exact root stays exact: √9 is 3, not 3.0000000001.
-                if op == UnOp::Sqrt && out.fract() == 0.0 && hint != Some(Numeric::Deci) {
+                let exact_root = op == UnOp::Sqrt && out.fract() == 0.0;
+                if exact_root && !hint.map(|h| h.is(Family::Deci)).unwrap_or(false) {
                     return Ok(Value::Int(out as i128));
                 }
-                Ok(Value::Deci(Decimal::from_f64(out, 15).normalised()))
+                Decimal::from_f64_checked(out, digits_of(hint))
+                    .map(|d| Value::Deci(d.normalised()))
+                    .ok_or_else(|| {
+                        self.err(
+                            E_OVERFLOW,
+                            span,
+                            "this result does not fit in the value's precision.",
+                            "widen the type, or use infnum.",
+                        )
+                    })
             }
         }
     }
 }
 
-/// Which numeric family the surrounding context asks for.
+/// Square roots are computed on `i128` integers, which caps the digits available.
+const SQRT_MAX_DIGITS: u32 = 18;
+
+/// How many decimal places the built-in constants are known to.
+///
+/// Bounded by `i128`: 39 digits is the most a mantissa can hold, so 36 decimal places
+/// leaves room for the integer part. Computing them from `f64` would have been wrong
+/// past the 16th digit, which is worse than a stated limit.
+const CONSTANT_DIGITS: u32 = 36;
+
+/// π, e and τ as exact decimals to `CONSTANT_DIGITS` places, truncated to `digits`.
+fn constant_value(c: Constant, digits: u32) -> Decimal {
+    let text = match c {
+        Constant::Pi => "3.141592653589793238462643383279502884",
+        Constant::E => "2.718281828459045235360287471352662497",
+        Constant::Tau => "6.283185307179586476925286766559005768",
+    };
+    let full = Decimal::parse(text).expect("a well-formed constant");
+    if digits >= full.scale {
+        return full;
+    }
+    // Truncate toward zero, then round the last kept digit.
+    let drop = full.scale - digits;
+    let divisor = 10i128.pow(drop);
+    let kept = full.mantissa / divisor;
+    let remainder = (full.mantissa % divisor).abs();
+    let rounded = if remainder * 2 >= divisor { kept + kept.signum().max(1) } else { kept };
+    Decimal::new(rounded, digits)
+}
+
+/// The options a `parse` call may carry. Strict by default; each option is opted into
+/// at the call site rather than set by a build flag, so the same source always means
+/// the same thing.
+#[derive(Debug, Default, Clone)]
+struct ParseOptions {
+    trim: bool,
+    scientific: bool,
+    hex: bool,
+    unicode_digits: bool,
+    /// Which character separates thousands, when one is declared.
+    group: Option<char>,
+    /// Which character is the decimal point, when it is not `.`.
+    decimal: Option<char>,
+}
+
+impl ParseOptions {
+    fn set(&mut self, name: &str, value: Option<&str>) {
+        match name {
+            "trim" => self.trim = true,
+            "scientific" => self.scientific = true,
+            "hex" => self.hex = true,
+            "unicode-digits" => self.unicode_digits = true,
+            "group" => self.group = value.and_then(|v| v.chars().next()),
+            "decimal" => self.decimal = value.and_then(|v| v.chars().next()),
+            _ => {}
+        }
+    }
+
+    /// Apply the textual options, leaving something `Decimal::parse` can read.
+    ///
+    /// `group` and `decimal` are what make `"1,000"` unambiguous: it means one thousand
+    /// in Britain and *one* in Germany, so the convention has to be stated rather than
+    /// guessed.
+    fn normalise(&self, text: &str) -> String {
+        let mut out = if self.trim { text.trim().to_string() } else { text.to_string() };
+        if let Some(sep) = self.group {
+            out = out.replace(sep, "");
+        }
+        if let Some(point) = self.decimal {
+            if point != '.' {
+                out = out.replace(point, ".");
+            }
+        }
+        if self.unicode_digits {
+            out = out.chars().map(unicode_digit_to_ascii).collect();
+        }
+        out
+    }
+
+    fn parse_number(&self, text: &str) -> Option<Decimal> {
+        if self.hex {
+            let body = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text);
+            if let Ok(v) = i128::from_str_radix(body, 16) {
+                return Some(Decimal::from_int(v));
+            }
+        }
+        if self.scientific {
+            if let Some((mantissa, exponent)) = split_exponent(text) {
+                let base = Decimal::parse(mantissa)?;
+                let exp: i32 = exponent.parse().ok()?;
+                return if exp >= 0 {
+                    base.mul(Decimal::new(10i128.checked_pow(exp as u32)?, 0))
+                } else {
+                    base.div_exact(Decimal::new(10i128.checked_pow((-exp) as u32)?, 0), 30)
+                };
+            }
+        }
+        Decimal::parse(text)
+    }
+}
+
+/// Map a Unicode decimal digit to its ASCII equivalent.
+///
+/// `char::to_digit` only understands ASCII, so the common decimal blocks are listed
+/// here. Each block is ten consecutive code points in value order, which is what the
+/// Unicode standard guarantees for the Nd category.
+fn unicode_digit_to_ascii(c: char) -> char {
+    const BLOCKS: &[u32] = &[
+        0x0660, // Arabic-Indic
+        0x06F0, // Extended Arabic-Indic
+        0x0966, // Devanagari
+        0x09E6, // Bengali
+        0x0A66, // Gurmukhi
+        0x0AE6, // Gujarati
+        0x0B66, // Oriya
+        0x0BE6, // Tamil
+        0x0C66, // Telugu
+        0x0CE6, // Kannada
+        0x0D66, // Malayalam
+        0x0E50, // Thai
+        0x0ED0, // Lao
+        0x0F20, // Tibetan
+        0x1040, // Myanmar
+        0x17E0, // Khmer
+        0xFF10, // Fullwidth
+    ];
+    let code = c as u32;
+    for &base in BLOCKS {
+        if code >= base && code < base + 10 {
+            return char::from_digit(code - base, 10).unwrap_or(c);
+        }
+    }
+    c
+}
+
+fn split_exponent(text: &str) -> Option<(&str, &str)> {
+    let idx = text.find(['e', 'E'])?;
+    Some((&text[..idx], &text[idx + 1..]))
+}
+
+/// What the surrounding context asks for: which numeric family, and how many digits
+/// an irrational result should be computed to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Numeric {
+pub struct Numeric {
+    pub family: Family,
+    pub digits: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Family {
     Int,
     Deci,
     Rat,
 }
 
-fn numeric_hint(ty: &TypeRef) -> Option<Numeric> {
-    match ty.base.as_str() {
-        "int" => Some(Numeric::Int),
-        "deci" => Some(Numeric::Deci),
-        "rat" => Some(Numeric::Rat),
-        _ => None,
+#[allow(non_upper_case_globals)]
+impl Numeric {
+    pub const Int: Numeric = Numeric { family: Family::Int, digits: None };
+    pub const Rat: Numeric = Numeric { family: Family::Rat, digits: None };
+    pub const Deci: Numeric = Numeric { family: Family::Deci, digits: None };
+
+    fn is(self, f: Family) -> bool {
+        self.family == f
     }
+}
+
+/// How many digits to compute an irrational to when nothing says otherwise.
+const DEFAULT_DIGITS: u32 = 15;
+
+fn digits_of(hint: Option<Numeric>) -> u32 {
+    hint.and_then(|h| h.digits).unwrap_or(DEFAULT_DIGITS)
+}
+
+fn numeric_hint_with(ty: &TypeRef, precision: Option<&Precision>) -> Option<Numeric> {
+    let mut ty = ty.clone();
+    if precision.is_some() {
+        ty.precision = precision.cloned();
+    }
+    numeric_hint(&ty)
+}
+
+fn numeric_hint(ty: &TypeRef) -> Option<Numeric> {
+    let family = match ty.base.as_str() {
+        "int" => Family::Int,
+        "deci" => Family::Deci,
+        "rat" => Family::Rat,
+        // `infnum` is exact and unbounded, so it behaves as a decimal here but takes a
+        // digit count for irrationals.
+        "infnum" | "∞num" => Family::Deci,
+        _ => return None,
+    };
+    // `[n digits]` says how much of an irrational to compute. `[n bit]` on a decimal
+    // is an IEEE format, whose significant digits are fixed.
+    let digits = match ty.precision {
+        Some(Precision::Digits(n)) => Some(n),
+        Some(Precision::Bits(32)) if family == Family::Deci => Some(7),
+        Some(Precision::Bits(64)) if family == Family::Deci => Some(16),
+        Some(Precision::Bits(128)) if family == Family::Deci => Some(34),
+        _ => None,
+    };
+    Some(Numeric { family, digits })
 }
 
 fn literal_value(text: &str, hint: Option<Numeric>) -> Value {
@@ -1295,8 +1539,8 @@ fn literal_value(text: &str, hint: Option<Numeric>) -> Value {
 
 fn coerce(v: Value, hint: Option<Numeric>) -> Value {
     match (&v, hint) {
-        (Value::Deci(d), Some(Numeric::Int)) if d.scale == 0 => Value::Int(d.mantissa),
-        (Value::Deci(d), Some(Numeric::Rat)) => {
+        (Value::Deci(d), Some(h)) if h.is(Family::Int) && d.scale == 0 => Value::Int(d.mantissa),
+        (Value::Deci(d), Some(h)) if h.is(Family::Rat) => {
             Rational::from_decimal(*d).map(Value::Rat).unwrap_or(v)
         }
         (Value::Deci(d), None) if d.scale == 0 => Value::Int(d.mantissa),

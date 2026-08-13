@@ -142,6 +142,26 @@ impl Decimal {
         self.sub(other.mul(Decimal::from_int(q))?)
     }
 
+    /// Square root to `digits` decimal places, computed on integers rather than
+    /// through `f64` — which is only good for about 16 significant digits and was
+    /// producing noise beyond that.
+    ///
+    /// Returns `None` when the working value would exceed `i128`, which caps this at
+    /// roughly 18 digits. A wider backend is a v1-stable concern.
+    pub fn sqrt_to(self, digits: u32) -> Option<Decimal> {
+        if self.mantissa < 0 {
+            return None;
+        }
+        // sqrt(m / 10^s) to n places = isqrt(m * 10^(2n - s)) / 10^n
+        let shift = 2i64 * digits as i64 - self.scale as i64;
+        let scaled = if shift >= 0 {
+            self.mantissa.checked_mul(pow10(shift as u32)?)?
+        } else {
+            self.mantissa / pow10((-shift) as u32)?
+        };
+        Some(Decimal { mantissa: integer_sqrt(scaled as u128) as i128, scale: digits })
+    }
+
     pub fn compare(self, other: Decimal) -> Option<std::cmp::Ordering> {
         let (a, b, _) = Decimal::align(self, other)?;
         Some(a.cmp(&b))
@@ -190,6 +210,20 @@ impl Decimal {
 
 fn pow10(n: u32) -> Option<i128> {
     10i128.checked_pow(n)
+}
+
+/// Integer square root by Newton's method.
+fn integer_sqrt(n: u128) -> u128 {
+    if n < 2 {
+        return n;
+    }
+    let mut x = n;
+    let mut y = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    x
 }
 
 impl fmt::Display for Decimal {
@@ -451,6 +485,24 @@ mod tests {
             Decimal::parse("0.9").unwrap().compare(Decimal::parse("0.10").unwrap()),
             Some(Ordering::Greater)
         );
+    }
+
+    #[test]
+    fn square_roots_are_computed_on_integers_not_floats() {
+        // √2 = 1.41421356237309504880168872420969807…
+        // An f64 is only good for about 16 significant digits.
+        let two = Decimal::from_int(2);
+        assert_eq!(
+            two.sqrt_to(18).unwrap().to_string(),
+            "1.414213562373095048"
+        );
+        // A perfect square comes out exact.
+        assert_eq!(Decimal::from_int(9).sqrt_to(10).unwrap().normalised().to_string(), "3");
+    }
+
+    #[test]
+    fn a_negative_square_root_is_refused() {
+        assert!(Decimal::from_int(-4).sqrt_to(10).is_none());
     }
 
     #[test]
