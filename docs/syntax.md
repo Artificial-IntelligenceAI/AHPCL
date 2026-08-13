@@ -281,9 +281,6 @@ var:int 'a' = 'sqrt-of-9-somehow'.     # √9 is exactly 3, so an int can hold i
 The result type must be able to hold the answer, which existing rules already enforce — an
 irrational root cannot land in an `int`.
 
-**OPEN:** precedence. `math { sqrt ('x') + 1 }` — is that `√x + 1` or `√(x + 1)`? Prefix operators
-normally bind tighter than binary ones.
-
 ### Maths operations are operators — **DECIDED**
 
 Every mathematical operation is an operator inside `math { }`, never a function call. Symbols where
@@ -313,6 +310,43 @@ which creates two categories and a boundary question for every addition; and tre
 as an operator, which would make it an arbitrary exception and leave `|x|` unused.
 
 **OPEN:** the full roster, and which of `log`/`ln` means which base.
+
+### Precedence — **DECIDED: standard mathematical order**
+
+Highest binds first:
+
+| | Operators |
+|---|---|
+| 1 | Brackets, and self-delimiting notation — `√‾`, `\|x\|`, `⌊x⌋`, `⌈x⌉` |
+| 2 | Powers — `^` `**` `xx` |
+| 3 | **Unary minus** |
+| 4 | `x` `*` `/` `//` `mod` |
+| 5 | `+` `-` |
+| 6 | Comparisons — `<` `>` `=` `≤` `≥` `≠` |
+| 7 | `not` `¬` |
+| 8 | `and` `∧` |
+| 9 | `or` `∨` |
+
+The non-obvious entry is **unary minus sitting between powers and multiplication**:
+
+```
+math { -('x') xx 2 }        →  -(x²)        with x = 3, that is -9
+math { -('x') x 2 }         →  (-x) x 2     with x = 3, that is -6
+```
+
+Negation loses to the power but beats the multiplication. That is genuinely what mathematics
+says — `−3²` is `−9` — and it surprises people in every language that implements it correctly, so
+it is worth an Informer note or prominent documentation.
+
+An earlier proposal that *all* prefix operators simply bind tighter than binary ones was
+**wrong**: it would have made `-('x') xx 2` equal `9`.
+
+In AHPCL's favour, operands are already delimited — `('x')` is unmistakably one thing — so
+`math { sqrt ('x') + 1 }` reads as `(√x) + 1` at a glance. That recovers much of the clarity the
+radical's horizontal bar provides in typeset mathematics and which linear text otherwise loses.
+
+**OPEN:** associativity — `math { 2 xx 3 xx 2 }` is `2^(3^2)` in mathematics (right-associative),
+unlike `-` and `/` which group left to right.
 
 ### Boolean operators — **DECIDED**
 
