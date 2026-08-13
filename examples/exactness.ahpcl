@@ -1,0 +1,21 @@
+#2 The promise the whole language rests on:
+   exact decimals, and exact fractions.
+
+var:deci 'a' = '0.1', 'b' = '0.2'.
+var:deci 'sum' = math { ('a') + ('b') }.
+print["0.1 + 0.2 = " ('sum')].
+
+var:bool 'exact' = math { ('sum') = '0.3' }.
+print["is it exactly 0.3? " ('exact')].
+
+var:rat 'third' = math { 1 / 3 }.
+print["1/3 = " ('third')].
+
+var:rat 'whole' = math { ('third') + ('third') + ('third') }.
+print["three thirds = " ('whole')].
+
+var:deci 'root' = math { sqrt 9 }.
+print["sqrt 9 = " ('root')].
+
+var:deci 'r2' = math { sqrt 2 }.
+print["sqrt 2 = " ('r2')].

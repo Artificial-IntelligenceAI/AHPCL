@@ -5,6 +5,7 @@ members = [
     "crates/ahpcl-driver",
     "crates/ahpcl-syntax",
     "crates/ahpcl-sema",
+    "crates/ahpcl-eval",
     "crates/ahpcl-diagnostics",
 ]
 
@@ -18,6 +19,7 @@ authors = ["Tankun Sriket"]
 ahpcl-diagnostics = { path = "crates/ahpcl-diagnostics" }
 ahpcl-syntax = { path = "crates/ahpcl-syntax" }
 ahpcl-sema = { path = "crates/ahpcl-sema" }
+ahpcl-eval = { path = "crates/ahpcl-eval" }
 ahpcl-driver = { path = "crates/ahpcl-driver" }
 unicode-segmentation = "1"
 unicode-width = "0.2"

@@ -677,7 +677,13 @@ impl<'a> Checker<'a> {
             // sqrt, sin, cos, tan, log, ln usually produce an irrational. A deci may
             // hold a rounded one, and the Informer reports the rounding.
             _ => {
-                let t = self.expr(operand, None);
+                // The operand still needs pinning, or a bare number inside it would be
+                // reported as ambiguous.
+                let operand_want = match expected.map(|t| t.element()) {
+                    Some(t) if t.base.is_numeric() => t,
+                    _ => Type::scalar(Base::Deci),
+                };
+                let t = self.expr(operand, Some(&operand_want));
                 if let Some(t) = &t {
                     if !t.base.is_numeric() {
                         self.err(
@@ -697,7 +703,7 @@ impl<'a> Checker<'a> {
                     self.err(
                         E_MISMATCH,
                         span,
-                        "this operation usually produces an irrational, which an int cannot hold.",
+                        "this operation usually produces an irrational, which an int cannot hold.                          √9 is exactly 3, but √2 is not, and which one you have is not always                          knowable before the program runs.",
                         "use deci for a rounded result, or infnum with a digit count.",
                     );
                     return None;

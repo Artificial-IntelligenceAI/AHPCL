@@ -23,6 +23,16 @@ name = "ahpcl-driver"
 version = "0.1.0"
 dependencies = [
  "ahpcl-diagnostics",
+ "ahpcl-eval",
+ "ahpcl-sema",
+ "ahpcl-syntax",
+]
+
+[[package]]
+name = "ahpcl-eval"
+version = "0.1.0"
+dependencies = [
+ "ahpcl-diagnostics",
  "ahpcl-sema",
  "ahpcl-syntax",
 ]

@@ -8,6 +8,7 @@ pub mod cli;
 use std::time::Instant;
 
 use ahpcl_diagnostics::{error, Error, Informer, SourceFile};
+use ahpcl_eval::run as evaluate;
 use ahpcl_sema::check as typecheck;
 use ahpcl_syntax::{lex, parse, Program};
 
@@ -77,6 +78,25 @@ pub fn check(name: impl Into<String>, text: impl Into<String>) -> Report {
     }
 
     Report { source, errors, informer, program: parsed.program }
+}
+
+/// The result of running a program.
+pub struct RunOutcome {
+    /// What the program printed. Goes to stdout, so pipes stay clean.
+    pub lines: Vec<String>,
+    /// A runtime failure, which stops the program.
+    pub error: Option<Error>,
+    pub elapsed: std::time::Duration,
+}
+
+/// `task:run` — check, then execute.
+///
+/// Runs on the interpreter. LLVM code generation is the next stage; the interpreter
+/// exists regardless, because verification needs it.
+pub fn run_program(report: &Report) -> RunOutcome {
+    let started = Instant::now();
+    let out = evaluate(&report.program);
+    RunOutcome { lines: out.lines, error: out.error, elapsed: started.elapsed() }
 }
 
 /// Human-readable durations. Sub-millisecond work is common, so µs matter.

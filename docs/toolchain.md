@@ -49,9 +49,9 @@ built before any of this is settled.
 
 ## Risks
 
-**LLVM version pinning.** One major version must be agreed between `inkwell`'s feature flag,
-Homebrew's `llvm` formula, and CI, with `LLVM_SYS_*_PREFIX` set. **Not yet checked** against
-what this machine actually has — do that before writing any codegen.
+**LLVM version pinning.** Checked 2026-08-12: this machine has Homebrew LLVM **22.1.8**, and
+`inkwell 0.10.0` offers an `llvm22-1` feature. No version lag, so the risk flagged here is
+closed. `LLVM_SYS_221_PREFIX` will need setting.
 
 **ORC binding maturity.** Budget more than a weekend for the JIT.
 

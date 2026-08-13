@@ -3,7 +3,7 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
-use ahpcl_driver::{check, cli, format_duration};
+use ahpcl_driver::{check, cli, format_duration, run_program};
 
 fn main() -> ExitCode {
     let started = Instant::now();
@@ -30,13 +30,13 @@ fn main() -> ExitCode {
 
     let task = cmd.task.as_deref().unwrap_or("check");
     match task {
-        "check" | "build" => {}
+        "check" | "build" | "run" => {}
         other => {
             eprintln!("AHPCL Error Handler:");
             eprintln!("Hello, I think that there's something wrong.");
             eprintln!();
             eprintln!("rule conditions: '{other}' is not a task AHPCL knows.");
-            eprintln!("suggest fix: try task:check. or task:build.");
+            eprintln!("suggest fix: try task:check., task:run. or task:build.");
             eprintln!();
             eprintln!("1 error found.");
             return ExitCode::FAILURE;
@@ -82,13 +82,34 @@ fn main() -> ExitCode {
         if !report.ok() {
             eprint!("{}", report.errors_text());
             failed = true;
+            continue;
+        }
+
+        if task == "run" {
+            let outcome = run_program(&report);
+            // Program output goes to stdout; everything else to stderr, so anything
+            // piped from stdout stays clean.
+            for line in &outcome.lines {
+                println!("{line}");
+            }
+            if let Some(err) = outcome.error {
+                eprintln!();
+                eprintln!("AHPCL Error Handler:");
+                eprintln!("Something went wrong while running.");
+                eprintln!();
+                eprint!("{}", ahpcl_diagnostics::error::render(&report.source, &[err]));
+                failed = true;
+            } else {
+                eprintln!("─────");
+                eprintln!("finished in {}", format_duration(outcome.elapsed));
+            }
         }
     }
 
     if task == "build" && !failed {
         eprintln!();
-        eprintln!("The parser and code generation are not built yet — this is a v1 iteration.");
-        eprintln!("`task:check.` is what works today.");
+        eprintln!("Code generation is not built yet — this is a v1 iteration.");
+        eprintln!("`task:run.` executes on the interpreter today.");
     }
 
     eprintln!();
@@ -107,10 +128,11 @@ AHPCL — Advanced High-Performance Calculations Language
 The command line speaks the same syntax as the language.
 
   ahpcl task:check. buildfile:main.ahpcl.
+  ahpcl task:run.   buildfile:main.ahpcl.
   ahpcl task:build. buildfile:main.ahpcl, lib.ahpcl. resultname:myprogram.
 
 Directives:
-  task:         check | build
+  task:         check | run | build
   buildfile:    source file(s); ',' extends, '.' ends
   resultname:   name of the output
   to:           where to write it

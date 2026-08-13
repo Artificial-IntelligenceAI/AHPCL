@@ -15,16 +15,31 @@ print["The variable \"x\" is " ('x') "."].
 
 ## Status
 
-**v1 iteration, in progress.** Not a stable release.
-
-Working today: the lexer, the Error Handler, the Informer, and a command line that speaks
-AHPCL's own syntax.
+**v1 iteration, in progress.** Not a stable release — but AHPCL programs run.
 
 ```
-ahpcl task:check. buildfile:examples/stats.ahpcl.
+ahpcl task:run. buildfile:examples/exactness.ahpcl.
+```
+```
+0.1 + 0.2 = 0.3
+is it exactly 0.3? true
+1/3 = 1/3
+three thirds = 1
+sqrt 9 = 3
+sqrt 2 = 1.414213562373095
 ```
 
-Next: the parser, then the type checker, then LLVM code generation.
+Decimals are stored as scaled integers and rationals as reduced fractions, never as
+binary floating point — which is why the first two lines say what they say.
+
+| Stage | |
+|---|---|
+| Lexer | done |
+| Parser | done |
+| Type checker | done — hierarchy, sign refinements, shapes, precision |
+| Interpreter | done — `task:run` |
+| Diagnostics | done — Error Handler, Informer |
+| LLVM code generation | next |
 
 Implementation: Rust, LLVM 22 via `inkwell`, ahead-of-time and JIT.
 
