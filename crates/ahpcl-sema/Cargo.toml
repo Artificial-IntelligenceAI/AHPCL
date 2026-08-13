@@ -1,5 +1,5 @@
 [package]
-name = "ahpcl-driver"
+name = "ahpcl-sema"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,4 +7,3 @@ license.workspace = true
 [dependencies]
 ahpcl-diagnostics.workspace = true
 ahpcl-syntax.workspace = true
-ahpcl-sema.workspace = true

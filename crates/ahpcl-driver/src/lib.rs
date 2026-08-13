@@ -8,6 +8,7 @@ pub mod cli;
 use std::time::Instant;
 
 use ahpcl_diagnostics::{error, Error, Informer, SourceFile};
+use ahpcl_sema::check as typecheck;
 use ahpcl_syntax::{lex, parse, Program};
 
 pub struct Report {
@@ -64,6 +65,16 @@ pub fn check(name: impl Into<String>, text: impl Into<String>) -> Report {
         if parsed.program.statements.len() == 1 { "" } else { "s" },
         format_duration(parse_time)
     ));
+
+    // Type checking only runs on a program the parser could make sense of; otherwise
+    // it would report a cascade of consequences rather than causes.
+    if errors.is_empty() {
+        let started = Instant::now();
+        let checked = typecheck(&parsed.program, &mut informer);
+        let check_time = started.elapsed();
+        errors.extend(checked.errors);
+        informer.say_global(format!("type-checked in {}", format_duration(check_time)));
+    }
 
     Report { source, errors, informer, program: parsed.program }
 }

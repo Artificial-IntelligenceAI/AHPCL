@@ -4,6 +4,7 @@ members = [
     "crates/ahpcl",
     "crates/ahpcl-driver",
     "crates/ahpcl-syntax",
+    "crates/ahpcl-sema",
     "crates/ahpcl-diagnostics",
 ]
 
@@ -16,6 +17,7 @@ authors = ["Tankun Sriket"]
 [workspace.dependencies]
 ahpcl-diagnostics = { path = "crates/ahpcl-diagnostics" }
 ahpcl-syntax = { path = "crates/ahpcl-syntax" }
+ahpcl-sema = { path = "crates/ahpcl-sema" }
 ahpcl-driver = { path = "crates/ahpcl-driver" }
 unicode-segmentation = "1"
 unicode-width = "0.2"
