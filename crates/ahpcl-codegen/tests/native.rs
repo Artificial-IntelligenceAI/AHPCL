@@ -12,6 +12,23 @@ fn workdir() -> PathBuf {
     dir
 }
 
+/// The compiled runtime staticlib. Generated code calls into it for exact decimals,
+/// so a produced binary will not link without it.
+fn runtime_library() -> PathBuf {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("the workspace root")
+        .to_path_buf();
+    for profile in ["debug", "release"] {
+        let candidate = root.join("target").join(profile).join("libahpcl_runtime.a");
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    panic!("build ahpcl-runtime first: cargo build -p ahpcl-runtime");
+}
+
 /// Compile, link and run, returning stdout.
 fn compile_and_run(name: &str, src: &str) -> String {
     let (program, errors) = parse_source(src);
@@ -27,6 +44,7 @@ fn compile_and_run(name: &str, src: &str) -> String {
         .arg(&object)
         .arg("-o")
         .arg(&binary)
+        .arg(runtime_library())
         .status()
         .expect("cc should run");
     assert!(status.success(), "linking should succeed");
@@ -181,11 +199,10 @@ fn text_and_values_print_together() {
 // ── what the backend declines, and why ──────────────────────────────────────
 
 #[test]
-fn decimals_are_declined_rather_than_compiled_wrongly() {
-    // Exact decimals have no native LLVM representation; the driver falls back to
-    // the interpreter rather than producing a float and quietly losing exactness.
-    let what = declines("var:deci 'x' = '0.1'.\nprint[('x')].");
-    assert!(what.contains("deci") || what.contains("decimal"), "{what}");
+fn text_values_are_declined() {
+    // Strings as values need heap management in the runtime, which is a later stage.
+    let what = declines("var:str 's' = \"hello\".\nprint[('s')].");
+    assert!(!what.is_empty(), "{what}");
 }
 
 #[test]
@@ -195,7 +212,67 @@ fn arrays_are_declined() {
 }
 
 #[test]
-fn division_is_declined_because_its_result_is_not_an_integer() {
+fn integer_division_producing_a_fraction_is_declined() {
+    // 1/3 between two *integers* has no integer result, and the decimal path needs
+    // decimal operands.
     let what = declines("var:deci 'r' = math { 1 / 3 }.\nprint[('r')].");
     assert!(!what.is_empty());
+}
+
+// ── exact decimals in native code ───────────────────────────────────────────
+
+#[test]
+fn decimals_are_exact_in_native_code_too() {
+    // The headline guarantee, compiled to machine code rather than interpreted.
+    assert_eq!(
+        compile_and_run(
+            "deciadd",
+            "var:deci 'a' = '0.1', 'b' = '0.2'.\n\
+             var:deci 's' = math { ('a') + ('b') }.\n\
+             print[('s')]."
+        ),
+        "0.3"
+    );
+}
+
+#[test]
+fn decimal_division_uses_the_true_digits_natively() {
+    assert_eq!(
+        compile_and_run(
+            "decidiv",
+            "var:deci 'a' = '58', 'b' = '3'.\n\
+             var:deci 'q' = math { ('a') / ('b') }.\n\
+             print[('q')]."
+        ),
+        "19.333333333333333"
+    );
+}
+
+#[test]
+fn decimal_comparison_compiles() {
+    assert_eq!(
+        compile_and_run(
+            "decicmp",
+            "var:deci 'a' = '0.1', 'b' = '0.2'.\n\
+             var:deci 's' = math { ('a') + ('b') }.\n\
+             var:int 'r' = '0'.\n\
+             if math { ('s') = '0.3' } { change:var:int 'r' = '1'. }, else { change:var:int 'r' = '2'. }.\n\
+             print[('r')]."
+        ),
+        "1"
+    );
+}
+
+#[test]
+fn an_int_widens_into_a_decimal_context() {
+    assert_eq!(
+        compile_and_run(
+            "deciwiden",
+            "var:deci 'a' = '0.5'.\n\
+             var:int 'n' = '3'.\n\
+             var:deci 's' = math { ('a') + ('n') }.\n\
+             print[('s')]."
+        ),
+        "3.5"
+    );
 }

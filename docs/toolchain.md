@@ -65,6 +65,27 @@ distinguishable). Roughly 10–15% extra care in IR design; nearly free insuranc
 Practical note: this is an Apple Silicon machine, so there is no CUDA locally. GPU work would
 mean Metal or remote NVIDIA hardware.
 
+## The runtime library — **built**
+
+`crates/ahpcl-runtime` is a C-ABI staticlib that generated code links against. It exists
+because **an exact decimal has no native LLVM representation**: there is no machine
+instruction for `0.1 + 0.2` that lands exactly on `0.3`, so the arithmetic has to live
+somewhere the compiler can call.
+
+Two implementation facts worth recording, both found the hard way:
+
+**Decimals cross the boundary by pointer, never by value.** LLVM IR performs no platform
+ABI lowering. A frontend that writes `{ i128, i32, i32 }` in a signature gets register
+passing, while the AArch64 C ABI passes a 24-byte struct indirectly. The two disagree
+*silently* — the call runs and does nothing. Pointers avoid the question everywhere.
+
+**Decimal stack slots need explicit 16-byte alignment.** LLVM defaults a struct `alloca`
+to 8; an `i128` requires 16, and Rust's `#[repr(C)]` layout assumes it. Reading across the
+mismatch is undefined behaviour that works in release and aborts under debug assertions.
+
+**Output is flushed on every write.** A compiled program's entry point is LLVM's C `main`,
+not Rust's, so Rust's flush-on-exit never runs and buffered output would be lost.
+
 ## Repository
 
 - Apache 2.0, private on GitHub

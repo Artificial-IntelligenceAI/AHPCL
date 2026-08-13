@@ -162,12 +162,14 @@ pub fn build_program(
     };
     let ir_lines = compiled.ir.lines().count();
 
-    // Link with the system compiler. The object only needs libc, since print becomes
-    // a printf call.
-    let status = std::process::Command::new("cc")
-        .arg(&object)
-        .arg("-o")
-        .arg(output)
+    // Link with the system compiler, against the AHPCL runtime — exact decimals have
+    // no machine representation, so their arithmetic lives there.
+    let mut cmd = std::process::Command::new("cc");
+    cmd.arg(&object).arg("-o").arg(output);
+    if let Some(rt) = runtime_library() {
+        cmd.arg(rt);
+    }
+    let status = cmd
         .status()
         .map_err(|e| format!("could not run the system linker: {e}"))?;
     let _ = std::fs::remove_file(&object);
@@ -180,6 +182,23 @@ pub fn build_program(
         ir_lines,
         elapsed: started.elapsed(),
     })
+}
+
+/// Where the compiled runtime staticlib lives.
+///
+/// Built by cargo alongside the compiler, so it sits next to this binary.
+fn runtime_library() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    for candidate in [
+        dir.join("libahpcl_runtime.a"),
+        dir.join("deps").join("libahpcl_runtime.a"),
+    ] {
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// Human-readable durations. Sub-millisecond work is common, so µs matter.

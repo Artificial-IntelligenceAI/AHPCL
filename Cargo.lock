@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "ahpcl-diagnostics",
  "ahpcl-driver",
+ "ahpcl-runtime",
 ]
 
 [[package]]
@@ -45,6 +46,10 @@ dependencies = [
  "ahpcl-diagnostics",
  "ahpcl-syntax",
 ]
+
+[[package]]
+name = "ahpcl-runtime"
+version = "0.1.0"
 
 [[package]]
 name = "ahpcl-sema"

@@ -39,7 +39,9 @@ binary floating point — which is why the first two lines say what they say.
 | Type checker | done — hierarchy, sign refinements, shapes, precision |
 | Interpreter | done — `task:run` |
 | Diagnostics | done — Error Handler, Informer |
-| LLVM code generation | **partial** — `int` and `bool` programs compile to native binaries |
+| Verification | done — three layers, interval analysis, precision inference |
+| LLVM code generation | **partial** — `int`, `bool` and `deci` compile to native binaries |
+| Runtime library | done — exact decimal arithmetic for native code |
 
 ```
 ahpcl task:build. buildfile:examples/native.ahpcl. resultname:native. to:/tmp.
@@ -49,9 +51,8 @@ ahpcl task:build. buildfile:examples/native.ahpcl. resultname:native. to:/tmp.
 Produces a real standalone executable — Mach-O arm64, linking only against libc.
 Summing 1 to 3,000,000 takes **0.01s** native against 413ms on the interpreter.
 
-Programs using `deci`, `rat` or arrays are not rejected: the backend declines them and the
-driver runs them on the interpreter instead, saying so. Exact decimals and rationals have no
-native LLVM representation, so covering them needs a runtime library — the next stage.
+Programs using `rat`, arrays or text are not rejected: the backend declines them and the
+driver runs them on the interpreter instead, saying so.
 
 Implementation: Rust, LLVM 22 via `inkwell`, ahead-of-time and JIT.
 

@@ -7,6 +7,7 @@ members = [
     "crates/ahpcl-sema",
     "crates/ahpcl-eval",
     "crates/ahpcl-codegen",
+    "crates/ahpcl-runtime",
     "crates/ahpcl-diagnostics",
 ]
 
@@ -22,6 +23,7 @@ ahpcl-syntax = { path = "crates/ahpcl-syntax" }
 ahpcl-sema = { path = "crates/ahpcl-sema" }
 ahpcl-eval = { path = "crates/ahpcl-eval" }
 ahpcl-codegen = { path = "crates/ahpcl-codegen" }
+ahpcl-runtime = { path = "crates/ahpcl-runtime" }
 ahpcl-driver = { path = "crates/ahpcl-driver" }
 unicode-segmentation = "1"
 unicode-width = "0.2"

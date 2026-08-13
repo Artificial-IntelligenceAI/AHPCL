@@ -11,3 +11,4 @@ path = "src/main.rs"
 [dependencies]
 ahpcl-driver.workspace = true
 ahpcl-diagnostics.workspace = true
+ahpcl-runtime.workspace = true
