@@ -38,9 +38,8 @@ decided.
 file input is only half-usable. Format-aware reading (CSV straight to a typed array) is a **later**
 addition.
 
-**32. Runtime failure has no story at all.** Converting `"hello"` to a number fails, a file may be
-missing, a runtime refinement check may trip — and AHPCL has no mechanism for any of it. Every
-error designed so far is a *compile* error.
+**32. Runtime failure wording** — the greeting line, and whether `AHPCL-RUN-0001` is the right code
+category. The behaviour is decided: failures stop the program.
 
 
 

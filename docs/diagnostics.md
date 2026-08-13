@@ -255,6 +255,39 @@ produce hundreds of notes. At ten lines apiece that is thousands of lines of out
 **PROPOSED, easy to add later:** `flag:informer = full` to expand notes into the structured
 error layout when investigating one specifically.
 
+## Runtime failure — **DECIDED**
+
+Runtime failures **stop the program**, reporting in the Error Handler's style.
+
+Three things can fail while running: a missing or unreadable file, a text-to-number conversion that
+does not parse, and a layer-3 refinement check that trips (see [types.md](types.md)).
+
+```
+AHPCL Error Handler:
+Something went wrong while running.
+main.ahpcl:12:18  [AHPCL-RUN-0001]
+file: main.ahpcl
+line: 12
+column: 18
+
+    12 |     var:str 'raw' = read["missing.csv"].
+       |                          ^^^^^^^^^^^^^ no such file
+
+rule conditions: read requires the file to exist and be readable.
+suggest fix: check the path, or that the file exists before running.
+```
+
+Chosen as a **deliberate starting point**, not a final answer: it costs nothing to build, it
+matches how compile errors already behave, and failures-as-values can be added later without
+breaking anything — turning a fatal failure into a handled one is additive, while the reverse is
+not.
+
+Rejected for now: failures as values that must be handled (Rust/Go style — a real feature needing a
+new kind of type and syntax at every fallible call site), and catchable exceptions (which hide
+whether a function can fail, sitting badly against a language that puts everything in the open).
+
+**OPEN:** the wording of the runtime greeting, and whether `RUN` is the right code category.
+
 ## Errors decided so far
 
 Every one of these is a compile error, per
