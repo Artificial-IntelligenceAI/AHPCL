@@ -22,7 +22,7 @@ that **AHPCL needs no reserved-word list** — a variable can be called `'print'
 | `"…"` | Text string; `\"` escapes a quote | **DECIDED** |
 | `('name')` | Reference the variable called *name* — quotes always | **DECIDED** |
 | `(expr)` | Group a subexpression | **DECIDED** |
-| `[…]` | Call arguments | **DECIDED** for `print`; **OPEN** whether all calls |
+| `[…]` | Call arguments — space-separated, no commas | **DECIDED** |
 | `math { … }` | Arithmetic block | **DECIDED** |
 | `[n bit]` | Precision, after the name in a declaration | **DECIDED** |
 | `[3, 4]` | Array shape, before precision in a declaration | **DECIDED** |
