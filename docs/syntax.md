@@ -869,6 +869,6 @@ meaningless and presumably an error.
 
 Indexing, modules, error handling, custom types.
 
-`set 'x' = …`, `loop while … { }`, and `invariant` appear in discussion examples as
-**PROPOSED** placeholders only — Claude invented those spellings. Indexing was written
-`('a')[('i')]`, which clashes with `[…]` for calls; unresolved.
+`invariant` (see [types.md](types.md), verification layer 4) is still a **PROPOSED** placeholder
+spelling. Indexing was written `('a')[('i')]` in discussion, which clashes with `[…]` for calls;
+unresolved.
