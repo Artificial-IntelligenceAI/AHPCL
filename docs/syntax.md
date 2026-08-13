@@ -884,9 +884,16 @@ The numeric families nest, and a narrower type is accepted where a wider one is 
 
 ```
         num
-       /        int   deci
-     /    +int  -int
+         |
+        rat
+         |
+        deci
+         |
+        int
 ```
+
+Sign refinements are orthogonal: `+int` is an `int` with an extra promise, so it goes anywhere an
+`int` is wanted.
 
 ```
 func:num 'area' [var:num 'width', 'height'] { … }.
