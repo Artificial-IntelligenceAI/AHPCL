@@ -284,6 +284,36 @@ irrational root cannot land in an `int`.
 **OPEN:** precedence. `math { sqrt ('x') + 1 }` — is that `√x + 1` or `√(x + 1)`? Prefix operators
 normally bind tighter than binary ones.
 
+### Maths operations are operators — **DECIDED**
+
+Every mathematical operation is an operator inside `math { }`, never a function call. Symbols where
+mathematics has them, words always:
+
+| Operation | Word | Symbol |
+|---|---|---|
+| Square root | `sqrt` | `√ ('x')` |
+| Absolute value | `abs` | `\|('x')\|` |
+| Floor | `floor` | `⌊('x')⌋` |
+| Ceiling | `ceil` | `⌈('x')⌉` |
+| Trigonometry | `sin`, `cos`, `tan` | — |
+| Logarithm | `log`, `ln` | — |
+
+**`|('x')|` is why `|` was kept free** — it was deliberately rejected as a selector separator so
+absolute value could have its real notation.
+
+Word-operators with no symbol are not an oddity: `mod`, `and`, `or`, `not`, `to` and `by` are
+already bare words inside `math { }`, safe because names are quoted.
+
+This means there are **no value-returning builtin functions in the maths domain at all** — which
+settles the bare-versus-quoted builtin question by making it not arise there. It remains open for
+non-maths builtins such as file reading.
+
+Rejected: splitting operations into "has real notation → operator" and "no symbol → function",
+which creates two categories and a boundary question for every addition; and treating `sqrt` alone
+as an operator, which would make it an arbitrary exception and leave `|x|` unused.
+
+**OPEN:** the full roster, and which of `log`/`ln` means which base.
+
 ### Boolean operators — **DECIDED**
 
 Words **and** symbols, both legal — the pattern already used for multiplication and power:

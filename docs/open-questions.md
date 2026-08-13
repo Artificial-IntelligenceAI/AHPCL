@@ -48,9 +48,8 @@ operations that do not exist. `≤ ≥ ≠ ÷` alias things that do exist. `∧ 
 `π` `e` `τ` `∞num` are **decided** (see [syntax.md](syntax.md)).
 `· × ⊙ ⊗` are reserved operations, and `∘` is unassigned.
 
-**3c. The rest of the maths operations** — `sin`, `cos`, `log`, `abs`, `floor`, `round`. `sqrt`
-is decided as a prefix operator with word and symbol spellings; whether the others follow the same
-shape is not. Note `|x|` for absolute value is available — `|` was deliberately kept free.
+**3c. The maths operator roster** — the shape is decided (all operators, words plus symbols).
+Still open: the full list, and which of `log`/`ln` means which base.
 
 **3d. Prefix operator precedence** — does `math { sqrt ('x') + 1 }` mean `√x + 1` or `√(x + 1)`?
 
@@ -61,7 +60,8 @@ a second parser). Note `\` is already the escape character.
 **6. Resolved** — `[…]` with space-separated arguments and no commas, for both `print` and user
 functions.
 
-**6b. Do future builtins stay bare like `print`**, or become ordinary quoted functions?
+**6b. Do non-maths builtins stay bare like `print`**, or become quoted functions? Maths operations
+are all operators now, so this only affects things like file reading.
 
 **7. Is juxtaposition-concatenation general** or specific to `print`? Does `(x)` interpolate in
 any string context?
