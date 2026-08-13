@@ -152,3 +152,39 @@ integer until the runtime normalised the way the interpreter does.
 - Apache 2.0, private on GitHub
 - Commits authored `Tankun Sriket <tankun.sriket@users.noreply.invalid>`
 - Commit messages contain only `Tankun Sriket`, with Claude as co-author
+
+## One execution path — **DECIDED**
+
+AHPCL runs compiled code and nothing else. `task:run` compiles to a temporary binary and
+runs it, exactly as `task:build` does, so what you test is what you ship. A program the
+backend cannot compile is an **error**, not a quiet fall back to the interpreter — there
+is no second way to run it.
+
+### Why the interpreter still exists
+
+It is the **test oracle**, not an execution mode. Nothing user-facing calls it.
+
+It is kept because it is an *independently written* second implementation of the language.
+Running a program both ways and diffing the output catches bugs no hand-written test can:
+a test encodes the assumptions of whoever wrote it, so it cannot catch a bug that came
+from those same assumptions. Two implementations disagreeing can. Most codegen bugs found
+so far surfaced exactly this way — loop counters read as the wrong type, selectors indexing
+flat storage instead of by dimension, a bare array reference handing back a pointer.
+
+`crates/ahpcl-driver/tests/differential.rs` enforces the agreement over every example plus
+a set of programs chosen to cross the seams between the two.
+
+A JIT would **not** replace this: it shares the codegen backend with AOT, so it inherits
+its bugs. Only a separately written implementation is a second opinion.
+
+When the two disagree, which one is wrong is a question to answer rather than assume —
+several failures have been the interpreter's fault, not the backend's.
+
+### Linking tests against the runtime
+
+A test that links a compiled program must build `ahpcl-runtime` itself. Declaring it as a
+dev-dependency is **not** sufficient: that builds the rlib, while linking needs the
+`staticlib` artifact, produced only when the crate is built as a target in its own right.
+Without that step the tests link whatever `libahpcl_runtime.a` was last left in `target/`,
+so a broken runtime passes unnoticed — verified by injecting a fault into `ahpcl_rat_mul`
+and watching the suite stay green until the build step was added.

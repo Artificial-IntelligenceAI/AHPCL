@@ -36,6 +36,7 @@ dependencies = [
  "ahpcl-codegen",
  "ahpcl-diagnostics",
  "ahpcl-eval",
+ "ahpcl-runtime",
  "ahpcl-sema",
  "ahpcl-syntax",
 ]

@@ -10,3 +10,9 @@ ahpcl-syntax.workspace = true
 ahpcl-sema.workspace = true
 ahpcl-eval.workspace = true
 ahpcl-codegen.workspace = true
+
+[dev-dependencies]
+# Compiled programs link against the runtime staticlib, so it must exist before the
+# differential test can build anything.
+ahpcl-runtime.workspace = true
+ahpcl-sema.workspace = true

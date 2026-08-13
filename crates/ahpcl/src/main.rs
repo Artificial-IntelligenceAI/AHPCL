@@ -4,7 +4,8 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use ahpcl_driver::{
-    budget_from_flags, build_program, check_with, cli, format_duration, run_program, Built,
+    budget_from_flags, build_program, build_temporary, check_with, cli, format_duration,
+    run_binary, Built,
 };
 
 fn main() -> ExitCode {
@@ -106,49 +107,57 @@ fn main() -> ExitCode {
                     eprintln!("wrote {}", path.display());
                 }
                 Ok(Built::NotYetNative { what }) => {
-                    eprintln!("informer: not compiled natively — {what} is not in the backend yet");
-                    eprintln!("informer: running on the interpreter instead");
-                    let outcome = run_program(&report);
-                    for line in &outcome.lines {
-                        println!("{line}");
-                    }
-                    if let Some(err) = outcome.error {
-                        eprint!("{}", ahpcl_diagnostics::error::render(&report.source, &[err]));
-                    }
-                    // The task asked for a binary and there is none. Saying so — and
-                    // exiting non-zero — beats a silent success that wrote no file.
-                    eprintln!();
-                    eprintln!("no binary was written: {} does not exist.", out.display());
+                    not_yet_native(&what);
                     failed = true;
                 }
                 Err(message) => {
-                    eprintln!("AHPCL Error Handler:");
-                    eprintln!("Hello, I think that there's something wrong.");
-                    eprintln!();
-                    eprintln!("rule conditions: {message}");
-                    eprintln!("suggest fix: check that a C compiler is installed and on PATH.");
-                    eprintln!();
-                    eprintln!("1 error found.");
+                    linker_trouble(&message);
                     failed = true;
                 }
             }
         }
 
         if task == "run" {
-            let outcome = run_program(&report);
-            // Program output goes to stdout; everything else to stderr, so anything
-            // piped from stdout stays clean.
-            for line in &outcome.lines {
-                println!("{line}");
-            }
-            if let Some(err) = outcome.error {
-                eprintln!();
-                // `render` prints its own header and greeting, so do not add another.
-                eprint!("{}", ahpcl_diagnostics::error::render(&report.source, &[err]));
-                failed = true;
-            } else {
-                eprintln!("─────");
-                eprintln!("finished in {}", format_duration(outcome.elapsed));
+            // Compiled, not interpreted: one execution path means what runs here is
+            // exactly what a built binary does.
+            let name = cmd
+                .buildfiles
+                .first()
+                .and_then(|p| std::path::Path::new(p).file_stem())
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "ahpcl".to_string());
+
+            match build_temporary(&report, &name) {
+                Ok(Built::Native { path, ir_lines, elapsed }) => {
+                    // Reported before the program runs, so the informer does not land
+                    // in the middle of its output.
+                    eprintln!(
+                        "informer: generated {ir_lines} lines of LLVM IR and linked in {}",
+                        format_duration(elapsed)
+                    );
+                    eprintln!("─────");
+                    match run_binary(&path) {
+                        Ok((ok, ran_in)) => {
+                            eprintln!("─────");
+                            eprintln!("finished in {}", format_duration(ran_in));
+                            if !ok {
+                                failed = true;
+                            }
+                        }
+                        Err(message) => {
+                            linker_trouble(&message);
+                            failed = true;
+                        }
+                    }
+                }
+                Ok(Built::NotYetNative { what }) => {
+                    not_yet_native(&what);
+                    failed = true;
+                }
+                Err(message) => {
+                    linker_trouble(&message);
+                    failed = true;
+                }
             }
         }
     }
@@ -181,3 +190,25 @@ Directives:
   to:           where to write it
   flag:         compiler flags, e.g. flag:loop-evaluation=limit
 ";
+
+/// The backend cannot compile this program yet. There is no second way to run it — the
+/// interpreter is a test oracle, not an execution mode — so this stops.
+fn not_yet_native(what: &str) {
+    eprintln!("AHPCL Error Handler:");
+    eprintln!("Hello, I think that there's something wrong.");
+    eprintln!();
+    eprintln!("rule conditions: {what} is not in the compiler yet, so this program cannot be built.");
+    eprintln!("suggest fix: rewrite that part, or open an issue — this is a gap in AHPCL, not in your program.");
+    eprintln!();
+    eprintln!("1 error found.");
+}
+
+fn linker_trouble(message: &str) {
+    eprintln!("AHPCL Error Handler:");
+    eprintln!("Hello, I think that there's something wrong.");
+    eprintln!();
+    eprintln!("rule conditions: {message}");
+    eprintln!("suggest fix: check that a C compiler is installed and on PATH.");
+    eprintln!();
+    eprintln!("1 error found.");
+}

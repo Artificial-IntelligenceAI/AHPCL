@@ -113,10 +113,15 @@ pub struct RunOutcome {
     pub elapsed: std::time::Duration,
 }
 
-/// `task:run` — check, then execute.
+/// Run a program on the interpreter — the **test oracle**, not an execution mode.
 ///
-/// Runs on the interpreter. LLVM code generation is the next stage; the interpreter
-/// exists regardless, because verification needs it.
+/// Nothing user-facing calls this. `task:run` compiles and runs like `task:build`, so
+/// AHPCL has exactly one execution path and what you test is what you ship.
+///
+/// The interpreter is kept because it is an *independently written* second
+/// implementation: running a program both ways and diffing the output catches bugs no
+/// hand-written test can, since a hand-written test encodes the same assumptions that
+/// produced the bug. See `tests/differential.rs`, which enforces that agreement.
 pub fn run_program(report: &Report) -> RunOutcome {
     let started = Instant::now();
     let out = evaluate(&report.program);
@@ -139,9 +144,34 @@ pub fn budget_from_flags(flags: &std::collections::BTreeMap<String, String>) -> 
 pub enum Built {
     /// A native executable at this path.
     Native { path: std::path::PathBuf, ir_lines: usize, elapsed: std::time::Duration },
-    /// The program uses a feature the backend does not cover yet. Not an error — the
-    /// interpreter runs it instead.
+    /// The program uses a feature the backend does not cover yet. This is an error:
+    /// the interpreter is a test oracle, not a second way to run a program, so there is
+    /// nothing to fall back to.
     NotYetNative { what: String },
+}
+
+/// Compile a program to a temporary binary, for `task:run`.
+///
+/// `task:run` compiles rather than interpreting: AHPCL has one execution path, so what
+/// runs here is exactly what a built binary does.
+pub fn build_temporary(report: &Report, name: &str) -> Result<Built, String> {
+    let dir = std::env::temp_dir().join("ahpcl-run");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not make a scratch directory: {e}"))?;
+    build_program(report, &dir.join(name))
+}
+
+/// Run a compiled program, then remove it. Reports whether it exited cleanly.
+///
+/// Standard streams are inherited, so the program owns the terminal: its output appears
+/// as it is produced, and `read` can still reach the keyboard.
+pub fn run_binary(path: &std::path::Path) -> Result<(bool, std::time::Duration), String> {
+    let started = Instant::now();
+    let status = std::process::Command::new(path)
+        .status()
+        .map_err(|e| format!("could not start the compiled program: {e}"))?;
+    let elapsed = started.elapsed();
+    let _ = std::fs::remove_file(path);
+    Ok((status.success(), elapsed))
 }
 
 /// `task:build` — compile to a native executable via LLVM.
@@ -193,6 +223,9 @@ fn runtime_library() -> Option<std::path::PathBuf> {
     for candidate in [
         dir.join("libahpcl_runtime.a"),
         dir.join("deps").join("libahpcl_runtime.a"),
+        // A test binary lives in `target/<profile>/deps/`, one level below the
+        // staticlib, so look up as well as down.
+        dir.join("..").join("libahpcl_runtime.a"),
     ] {
         if candidate.exists() {
             return Some(candidate);
