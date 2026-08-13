@@ -135,6 +135,13 @@ Values built at runtime — text, arrays, boxed `num`s — are not freed during 
 process exit reclaims them. Freeing needs ownership tracking, which v1 does not have. A
 program that builds a million strings in a loop holds a million strings.
 
+**Every operator compiles, not only the arithmetic ones.** Powers, `//`, `mod`, the array
+operators, `sqrt`, `floor`/`ceil`, and the transcendentals all reach native code. Where a
+function has no exact decimal answer — `sin`, `cos`, `tan`, `log`, `ln` — the runtime goes
+through `f64` exactly as the interpreter does, so the two land on the same digits rather
+than merely close ones. Square roots stay on the exact integer-Newton path, capped at the
+same 18 places.
+
 **Decimals are normalised after every operation.** Multiplication adds scales, so without
 dropping trailing zeros a chain of operations compounds 15 digits into 30, then 60, until
 the value overflows into nonsense. This was not cosmetic: an average printed as a 500-digit

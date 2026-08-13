@@ -104,6 +104,18 @@ fn deci_pow(a: AhpclDecimal, e: u32) -> Option<AhpclDecimal> {
     Some(out)
 }
 
+pub(crate) fn deci_as_f64(d: AhpclDecimal) -> f64 {
+    deci_to_f64(d)
+}
+
+pub(crate) fn decimal_from_f64_public(v: f64, digits: u32) -> Option<AhpclDecimal> {
+    decimal_from_f64(v, digits).map(|d| AhpclDecimal::ok(d.mantissa, d.scale))
+}
+
+/// AHPCL computes square roots to at most this many places, the same cap the
+/// interpreter enforces.
+pub(crate) const SQRT_MAX_DIGITS: u32 = 18;
+
 fn deci_to_f64(d: AhpclDecimal) -> f64 {
     d.mantissa as f64 / 10f64.powi(d.scale as i32)
 }
@@ -119,6 +131,7 @@ fn decimal_from_f64(v: f64, digits: u32) -> Option<AhpclDecimal> {
 /// Square root to `digits` places, by integer Newton's method — the same algorithm the
 /// interpreter uses, so the two agree digit for digit rather than approximately.
 pub(crate) fn deci_sqrt(d: AhpclDecimal, digits: u32) -> AhpclDecimal {
+    let digits = digits.min(SQRT_MAX_DIGITS);
     if d.mantissa < 0 {
         fail_with("AHPCL-RUN-0001", "the square root of a negative number is not a real number");
     }
@@ -364,16 +377,15 @@ pub unsafe extern "C" fn ahpcl_str_cmp(a: *const AhpclStr, b: *const AhpclStr) -
     }
 }
 
-/// Read one line from standard input, without its newline.
+/// Read a whole file as text — `read["path"]`, the same thing the interpreter does.
+/// A missing or unreadable file stops the program through the Error Handler.
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_read_line(out: *mut AhpclStr) {
-    use std::io::BufRead;
-    let mut line = String::new();
-    let _ = std::io::stdin().lock().read_line(&mut line);
-    while line.ends_with('\n') || line.ends_with('\r') {
-        line.pop();
+pub unsafe extern "C" fn ahpcl_read_file(out: *mut AhpclStr, path: *const AhpclStr) {
+    let path = (*path).as_str();
+    match std::fs::read_to_string(path) {
+        Ok(text) => *out = AhpclStr::owned(text),
+        Err(e) => fail_with("AHPCL-RUN-0004", &format!("{path} could not be read — {e}")),
     }
-    *out = AhpclStr::owned(line);
 }
 
 /// The options `parse` accepts, as a bitmask so they cross the ABI as one word.

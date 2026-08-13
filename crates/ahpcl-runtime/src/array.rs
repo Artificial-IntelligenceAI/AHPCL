@@ -650,6 +650,11 @@ pub const UN_ABS: u32 = 1;
 pub const UN_SQRT: u32 = 2;
 pub const UN_FLOOR: u32 = 3;
 pub const UN_CEIL: u32 = 4;
+pub const UN_SIN: u32 = 5;
+pub const UN_COS: u32 = 6;
+pub const UN_TAN: u32 = 7;
+pub const UN_LOG: u32 = 8;
+pub const UN_LN: u32 = 9;
 
 pub(crate) fn unary(op: u32, c: &Cell, digits: u32) -> Cell {
     match op {
@@ -668,6 +673,22 @@ pub(crate) fn unary(op: u32, c: &Cell, digits: u32) -> Cell {
         UN_SQRT => {
             let d = to_deci(c);
             Cell::Deci(crate::deci_sqrt(d, digits))
+        }
+        // Transcendental functions have no exact decimal answer, so these go through
+        // f64 — the same route the interpreter takes, and for the same reason.
+        UN_SIN | UN_COS | UN_TAN | UN_LOG | UN_LN => {
+            let f = crate::deci_as_f64(to_deci(c));
+            let out = match op {
+                UN_SIN => f.sin(),
+                UN_COS => f.cos(),
+                UN_TAN => f.tan(),
+                UN_LOG => f.log10(),
+                _ => f.ln(),
+            };
+            match crate::decimal_from_f64_public(out, digits) {
+                Some(d) => Cell::Deci(d),
+                None => fail_with("AHPCL-RUN-0001", "this result is not a finite number"),
+            }
         }
         UN_FLOOR | UN_CEIL => {
             let d = to_deci(c);

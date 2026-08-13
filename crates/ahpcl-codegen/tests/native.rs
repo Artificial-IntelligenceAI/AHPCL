@@ -563,3 +563,30 @@ fn text_and_bool_arrays_compile() {
         "{a, b, c}\n{true, false}\nb"
     );
 }
+
+#[test]
+fn the_transcendental_operators_compile() {
+    // No exact decimal answer exists, so these go through f64 — the same route the
+    // interpreter takes, so the two land on the same digits.
+    assert_eq!(
+        compile_and_run(
+            "transcendental",
+            "var:deci 'a' [6 digits] = math { cos '0' }.\n\
+             var:deci 'b' [6 digits] = math { log '100' }.\n\
+             print[('a')].\nprint[('b')]."
+        ),
+        "1\n2"
+    );
+}
+
+#[test]
+fn reading_a_file_compiles() {
+    // `read` takes a path and hands back the whole file, not a line of input.
+    let path = workdir().join("read-me.txt");
+    std::fs::write(&path, "hello from a file\n").expect("a readable file");
+    let src = format!(
+        "var:str 'text' = read[\"{}\"].\nprint[('text')].",
+        path.display()
+    );
+    assert_eq!(compile_and_run("readfile", &src), "hello from a file");
+}

@@ -306,7 +306,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.module
             .add_function("ahpcl_str_cmp", i32t.fn_type(&[p.into(), p.into()], false), None);
         self.module
-            .add_function("ahpcl_read_line", void.fn_type(&[p.into()], false), None);
+            .add_function("ahpcl_read_file", void.fn_type(&[p.into(), p.into()], false), None);
         self.module.add_function(
             "ahpcl_parse_int",
             i64t.fn_type(&[p.into(), i64t.into(), p.into(), p.into()], false),
@@ -926,7 +926,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             ExprKind::Unary { op, operand } => match op {
                 // A square root is a decimal even from a whole number; rounding gives
                 // a whole number whatever went in; `not` is a bool.
-                UnOp::Sqrt => Native::Deci,
+                UnOp::Sqrt | UnOp::Sin | UnOp::Cos | UnOp::Tan | UnOp::Log | UnOp::Ln => {
+                    Native::Deci
+                }
                 UnOp::Floor | UnOp::Ceil => Native::Int,
                 UnOp::Not => Native::Bool,
                 _ => self.value_repr(operand),
@@ -1202,14 +1204,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 // Exact values have no machine negate or square root, so these go
                 // through the runtime — the same code the interpreter's results come
                 // from, so the digits agree rather than merely being close.
-                UnOp::Neg | UnOp::Abs | UnOp::Sqrt | UnOp::Floor | UnOp::Ceil => {
-                    self.unary_exact(*op, operand, want)
-                }
                 UnOp::Not => {
                     let v = self.expr(operand, Native::Bool)?.into_int_value();
                     Ok(self.builder.build_not(v, "not").unwrap().into())
                 }
-                other => Err(Unsupported::new(format!("the operator {other:?}"))),
+                _ => self.unary_exact(*op, operand, want),
             },
             ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, want),
             ExprKind::Call { name, args } => {
@@ -1340,13 +1339,19 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             UnOp::Abs => 1,
             UnOp::Sqrt => 2,
             UnOp::Floor => 3,
-            _ => 4,
+            UnOp::Ceil => 4,
+            UnOp::Sin => 5,
+            UnOp::Cos => 6,
+            UnOp::Tan => 7,
+            UnOp::Log => 8,
+            UnOp::Ln => 9,
+            other => return Err(Unsupported::new(format!("the operator {other:?}"))),
         };
         // A square root is a decimal even when its operand is a whole number, and
         // floor and ceil hand back a whole number whatever went in.
         let held = self.value_repr(operand);
         let natural = match op {
-            UnOp::Sqrt => Native::Deci,
+            UnOp::Sqrt | UnOp::Sin | UnOp::Cos | UnOp::Tan | UnOp::Log | UnOp::Ln => Native::Deci,
             UnOp::Floor | UnOp::Ceil => Native::Int,
             _ => held,
         };
@@ -1810,12 +1815,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
         match name {
             "read" => {
-                // Any argument is a prompt, printed before reading.
-                for a in args {
-                    self.print(std::slice::from_ref(a))?;
-                }
+                // `read["path"]` reads that whole file as text.
+                let path = match args.first() {
+                    Some(a) => self.expr(a, Native::Str)?,
+                    None => self.str_value(""),
+                };
+                let path = self.spill(path, "read.path");
                 let out = self.alloca("read.out", self.str_type().into());
-                self.call_runtime("ahpcl_read_line", &[out.into()]);
+                self.call_runtime("ahpcl_read_file", &[out.into(), path.into()]);
                 Ok(self.builder.build_load(self.str_type(), out, "read.val").unwrap())
             }
             "parse" => {
