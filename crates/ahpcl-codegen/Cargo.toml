@@ -1,5 +1,5 @@
 [package]
-name = "ahpcl-driver"
+name = "ahpcl-codegen"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,6 +7,4 @@ license.workspace = true
 [dependencies]
 ahpcl-diagnostics.workspace = true
 ahpcl-syntax.workspace = true
-ahpcl-sema.workspace = true
-ahpcl-eval.workspace = true
-ahpcl-codegen.workspace = true
+inkwell = { version = "0.10", features = ["llvm22-1"] }

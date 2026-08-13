@@ -1,0 +1,3 @@
+# LLVM 22 via Homebrew. inkwell's llvm22-1 feature matches 22.1.8.
+[env]
+LLVM_SYS_221_PREFIX = "/opt/homebrew/opt/llvm"

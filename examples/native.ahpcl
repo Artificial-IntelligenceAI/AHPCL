@@ -1,0 +1,27 @@
+#3 A program that compiles all the way to native machine code.
+   Integers and booleans only — that is what the LLVM backend
+   covers in this v1 iteration.
+
+func:int 'square' [var:int 'n'] {
+    handback math { ('n') x ('n') }.
+}.
+
+print["Squares:"].
+loop:var:int 'i' = math { 1 to 5 } {
+    var:int 's' = 'square'[('i')].
+    print["  " ('s')].
+}.
+
+print["Countdown:"].
+var:int 'n' = '3'.
+loop:while math { ('n') > 0 } {
+    print["  " ('n')].
+    change:var:int 'n' = math { ('n') - 1 }.
+}.
+
+var:int 'total' = '0'.
+loop:var:int 'k' = math { 1 to 100 } {
+    change:var:int 'total' = math { ('total') + ('k') }.
+}.
+print["sum of 1 to 100 ="].
+print[('total')].

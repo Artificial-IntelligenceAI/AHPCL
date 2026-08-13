@@ -3,7 +3,7 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
-use ahpcl_driver::{check, cli, format_duration, run_program};
+use ahpcl_driver::{build_program, check, cli, format_duration, run_program, Built};
 
 fn main() -> ExitCode {
     let started = Instant::now();
@@ -85,6 +85,49 @@ fn main() -> ExitCode {
             continue;
         }
 
+        if task == "build" {
+            let name = cmd.resultname.clone().unwrap_or_else(|| {
+                std::path::Path::new(path)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "a.out".to_string())
+            });
+            let dir = cmd.to.clone().unwrap_or_else(|| ".".to_string());
+            let out = std::path::Path::new(&dir).join(&name);
+
+            match build_program(&report, &out) {
+                Ok(Built::Native { path, ir_lines, elapsed }) => {
+                    eprintln!(
+                        "informer: generated {ir_lines} lines of LLVM IR and linked in {}",
+                        format_duration(elapsed)
+                    );
+                    eprintln!("wrote {}", path.display());
+                }
+                Ok(Built::NotYetNative { what }) => {
+                    eprintln!("informer: not compiled natively — {what} is not in the backend yet");
+                    eprintln!("informer: running on the interpreter instead");
+                    let outcome = run_program(&report);
+                    for line in &outcome.lines {
+                        println!("{line}");
+                    }
+                    if let Some(err) = outcome.error {
+                        eprint!("{}", ahpcl_diagnostics::error::render(&report.source, &[err]));
+                        failed = true;
+                    }
+                }
+                Err(message) => {
+                    eprintln!("AHPCL Error Handler:");
+                    eprintln!("Hello, I think that there's something wrong.");
+                    eprintln!();
+                    eprintln!("rule conditions: {message}");
+                    eprintln!("suggest fix: check that a C compiler is installed and on PATH.");
+                    eprintln!();
+                    eprintln!("1 error found.");
+                    failed = true;
+                }
+            }
+        }
+
         if task == "run" {
             let outcome = run_program(&report);
             // Program output goes to stdout; everything else to stderr, so anything
@@ -106,11 +149,7 @@ fn main() -> ExitCode {
         }
     }
 
-    if task == "build" && !failed {
-        eprintln!();
-        eprintln!("Code generation is not built yet — this is a v1 iteration.");
-        eprintln!("`task:run.` executes on the interpreter today.");
-    }
+
 
     eprintln!();
     eprintln!("finished in {}", format_duration(started.elapsed()));

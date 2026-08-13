@@ -99,6 +99,53 @@ pub fn run_program(report: &Report) -> RunOutcome {
     RunOutcome { lines: out.lines, error: out.error, elapsed: started.elapsed() }
 }
 
+/// What `task:build` produced.
+pub enum Built {
+    /// A native executable at this path.
+    Native { path: std::path::PathBuf, ir_lines: usize, elapsed: std::time::Duration },
+    /// The program uses a feature the backend does not cover yet. Not an error — the
+    /// interpreter runs it instead.
+    NotYetNative { what: String },
+}
+
+/// `task:build` — compile to a native executable via LLVM.
+pub fn build_program(
+    report: &Report,
+    output: &std::path::Path,
+) -> Result<Built, String> {
+    let started = Instant::now();
+    let object = output.with_extension("o");
+    let name = output
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "ahpcl".to_string());
+
+    let compiled = match ahpcl_codegen::compile(&report.program, &object, &name) {
+        Ok(c) => c,
+        Err(u) => return Ok(Built::NotYetNative { what: u.what }),
+    };
+    let ir_lines = compiled.ir.lines().count();
+
+    // Link with the system compiler. The object only needs libc, since print becomes
+    // a printf call.
+    let status = std::process::Command::new("cc")
+        .arg(&object)
+        .arg("-o")
+        .arg(output)
+        .status()
+        .map_err(|e| format!("could not run the system linker: {e}"))?;
+    let _ = std::fs::remove_file(&object);
+
+    if !status.success() {
+        return Err("the system linker failed".to_string());
+    }
+    Ok(Built::Native {
+        path: output.to_path_buf(),
+        ir_lines,
+        elapsed: started.elapsed(),
+    })
+}
+
 /// Human-readable durations. Sub-millisecond work is common, so µs matter.
 pub fn format_duration(d: std::time::Duration) -> String {
     let ns = d.as_nanos();
