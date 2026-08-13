@@ -137,9 +137,7 @@ fn main() -> ExitCode {
             }
             if let Some(err) = outcome.error {
                 eprintln!();
-                eprintln!("AHPCL Error Handler:");
-                eprintln!("Something went wrong while running.");
-                eprintln!();
+                // `render` prints its own header and greeting, so do not add another.
                 eprint!("{}", ahpcl_diagnostics::error::render(&report.source, &[err]));
                 failed = true;
             } else {

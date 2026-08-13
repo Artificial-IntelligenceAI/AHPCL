@@ -352,3 +352,148 @@ fn unicode_names_work_end_to_end() {
         "Bro, I'm laughing!"
     );
 }
+
+// ── regressions found by the stress-testing pass (2026-08-12) ───────────────
+
+#[test]
+fn all_makes_an_operation_elementwise_rather_than_summing() {
+    // The rule was only half implemented: `:all;` was ignored and every array
+    // operation silently reduced to a sum.
+    assert_eq!(
+        one("var:vector:int 'a' [3] = {'1','2','3'}.\n\
+             var:vector:int 'u' [3] = math { ('a'):all; + 1 }.\n\
+             print[('u')]."),
+        "{2, 3, 4}"
+    );
+    assert_eq!(
+        one("var:vector:int 'a' [3] = {'1','2','3'}.\n\
+             var:vector:int 'b' [3] = {'4','5','6'}.\n\
+             var:vector:int 'v' [3] = math { ('a'):all; + ('b'):all; }.\n\
+             print[('v')]."),
+        "{5, 7, 9}"
+    );
+}
+
+#[test]
+fn a_bare_reference_still_sums() {
+    assert_eq!(
+        one("var:vector:int 'a' [3] = {'1','2','3'}.\n\
+             var:int 's' = math { ('a') + 1 }.\n\
+             print[('s')]."),
+        "7"
+    );
+}
+
+#[test]
+fn all_and_the_hadamard_operator_agree() {
+    // types.md: `('a'):all; x ('b'):all;` and `('a') ⊙ ('b')` are the same operation.
+    let spelled_out = one("var:vector:int 'a' [3] = {'1','2','3'}.\n\
+                           var:vector:int 'b' [3] = {'4','5','6'}.\n\
+                           var:vector:int 'c' [3] = math { ('a'):all; x ('b'):all; }.\n\
+                           print[('c')].");
+    let symbol = one("var:vector:int 'a' [3] = {'1','2','3'}.\n\
+                      var:vector:int 'b' [3] = {'4','5','6'}.\n\
+                      var:vector:int 'c' [3] = math { ('a') ⊙ ('b') }.\n\
+                      print[('c')].");
+    assert_eq!(spelled_out, symbol);
+    assert_eq!(spelled_out, "{4, 10, 18}");
+}
+
+#[test]
+fn chained_selectors_address_successive_dimensions() {
+    // syntax.md: `('m'):all;:2;` is "every row, column 2" — not row 2 again.
+    assert_eq!(
+        one("var:matrix:int 'm' [2, 2] = {{'1','2'},{'3','4'}}.\n\
+             var:vector:int 'c' [2] = math { ('m'):all;:2; }.\n\
+             print[('c')]."),
+        "{2, 4}"
+    );
+    assert_eq!(
+        one("var:matrix:int 'm' [2, 2] = {{'1','2'},{'3','4'}}.\n\
+             var:int 'v' = math { ('m'):2;:1; }.\n\
+             print[('v')]."),
+        "3"
+    );
+}
+
+#[test]
+fn a_range_selector_has_the_length_it_selects() {
+    assert_eq!(
+        one("var:vector:int 'a' [5] = {'10','20','30','40','50'}.\n\
+             var:vector:int 'o' [3] = math { ('a'):1 to 5 by 2; }.\n\
+             print[('o')]."),
+        "{10, 30, 50}"
+    );
+}
+
+#[test]
+fn truncating_division_truncates_and_mod_gives_the_remainder() {
+    assert_eq!(
+        one("var:deci 'a' = '7.5'.\nvar:int 'q' = math { ('a') // 2 }.\nprint[('q')]."),
+        "3"
+    );
+    assert_eq!(
+        one("var:deci 'a' = '7.5'.\nvar:deci 'r' = math { ('a') mod 2 }.\nprint[('r')]."),
+        "1.5"
+    );
+}
+
+#[test]
+fn integer_powers_of_rationals_stay_exact() {
+    // Was 111111/1000000, from a round trip through f64.
+    assert_eq!(
+        one("var:rat 't' = math { 1 / 3 }.\n\
+             var:rat 's' = math { ('t') xx 2 }.\n\
+             print[('s')]."),
+        "1/9"
+    );
+}
+
+#[test]
+fn decimal_division_and_powers_use_the_true_digits() {
+    // Was 19.333333333333332 — the f64 bit pattern rather than the real value.
+    assert_eq!(
+        one("var:deci 'a' = math { 58 / 3 }.\nprint[('a')]."),
+        "19.333333333333333"
+    );
+    // 1.1^20 is exact; f64 was wrong from the 13th decimal place.
+    assert!(
+        one("var:deci 'p' = math { 1.1 xx 20 }.\nprint[('p')].")
+            .starts_with("6.7274999493256000"),
+    );
+}
+
+#[test]
+fn summing_an_array_does_not_wrap_on_overflow() {
+    assert_eq!(
+        fails(
+            "var:vector:int 'v' [2] = {'170141183460469231731687303715884105727','1'}.\n\
+             var:int 's' = math { ('v') + 0 }.\n\
+             print[('s')]."
+        ),
+        "AHPCL-PREC-0004"
+    );
+}
+
+#[test]
+fn decimal_division_and_remainder_by_zero_are_errors() {
+    assert_eq!(
+        fails("var:deci 'a' = '7.5'.\nvar:int 'r' = math { ('a') // 0 }.\nprint[('r')]."),
+        "AHPCL-RUN-0002"
+    );
+    assert_eq!(
+        fails("var:deci 'a' = '7.5'.\nvar:deci 'r' = math { ('a') mod 0 }.\nprint[('r')]."),
+        "AHPCL-RUN-0002"
+    );
+}
+
+#[test]
+fn a_loop_whose_handbacks_disagree_on_shape_is_an_error_not_a_panic() {
+    let src = "var:matrix:int 'm' [3, 3] = loop:var:int 'i' = math { 1 to 3 } {\n\
+                   handback loop:var:int 'j' = math { 1 to math { 4 - ('i') } } {\n\
+                       handback math { ('j') }.\n\
+                   }.\n\
+               }.\n\
+               print[('m')].";
+    assert_eq!(fails(src), "AHPCL-RUN-0001");
+}

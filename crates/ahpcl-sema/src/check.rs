@@ -24,6 +24,9 @@ const E_READ_ONLY: Code = Code::new(Category::Sign, 2);
 const E_TYPE_RESTATED: Code = Code::new(Category::Type, 4);
 const E_PREC_ON_INFNUM: Code = Code::new(Category::Prec, 2);
 const E_DECI_WIDTH: Code = Code::new(Category::Prec, 3);
+const E_OVERFLOW: Code = Code::new(Category::Prec, 4);
+const E_BAD_WIDTH: Code = Code::new(Category::Prec, 5);
+const E_SIGN_VIOLATION: Code = Code::new(Category::Sign, 1);
 
 pub struct Checked {
     pub errors: Vec<Error>,
@@ -276,6 +279,16 @@ impl<'a> Checker<'a> {
         }
 
         if expected.is_some() && (!all_produce || !has_else) {
+            self.err(
+                E_MISMATCH,
+                chain.span,
+                if has_else {
+                    "this conditional is used for its value, but not every branch hands one back."
+                } else {
+                    "this conditional is used for its value, but it has no else, so one path produces nothing."
+                },
+                "add an else, and a handback in every branch.",
+            );
             return None;
         }
         produced.or_else(|| expected.cloned())
@@ -373,6 +386,7 @@ impl<'a> Checker<'a> {
         match expected {
             Some(t) if t.base.is_numeric() => {
                 let elem = t.element();
+                self.check_literal_value(text, &elem, span);
                 if has_point && elem.base == Base::Int {
                     self.err(
                         E_MISMATCH,
@@ -410,65 +424,108 @@ impl<'a> Checker<'a> {
             return None;
         };
 
-        let mut ty = var.ty.clone();
-        for sel in selectors {
-            ty = self.apply_selector(ty, sel, span)?;
-        }
-        Some(ty)
+        self.apply_selectors(var.ty.clone(), selectors, span)
     }
 
-    /// `:length;` is a count, `:shape;` is a vector of dimensions, and indices reduce
-    /// the rank — one index gives a plain value, several give an array.
-    fn apply_selector(&mut self, ty: Type, sel: &Selector, span: Span) -> Option<Type> {
-        match sel {
-            Selector::Length => Some(Type::scalar(Base::Int)),
-            Selector::Shape => Some(Type {
-                base: Base::Int,
-                sign: None,
-                shape: Some(Shape(vec![Dim::Known(
-                    ty.shape.as_ref().map(|s| s.rank() as u64).unwrap_or(0),
-                )])),
-                precision: None,
-            }),
-            Selector::All => Some(ty),
-            Selector::Indices(indices) => {
-                for i in indices {
-                    self.expr(i, Some(&Type::scalar(Base::Int)));
+    /// Apply a selector chain. Consecutive index selectors address **successive
+    /// dimensions**; `:length;` and `:shape;` are questions about the array and restart
+    /// the chain on their result.
+    fn apply_selectors(&mut self, ty: Type, selectors: &[Selector], span: Span) -> Option<Type> {
+        let mut ty = ty;
+        let mut run: Vec<&Selector> = Vec::new();
+        for sel in selectors {
+            match sel {
+                Selector::Length => {
+                    let _ = self.apply_dimension_run(ty, &run, span)?;
+                    run.clear();
+                    ty = Type::scalar(Base::Int);
                 }
-                let Some(shape) = ty.shape.clone() else {
-                    self.err(
-                        E_SHAPE_MISMATCH,
-                        span,
-                        format!("{} is not an array, so it cannot be selected from.", ty.render()),
-                        "selectors apply to vectors, matrices and tensors.",
-                    );
-                    return None;
-                };
-                if indices.len() == 1 {
-                    // One index gives a plain value; the remaining dimensions stay.
-                    let rest: Vec<Dim> = shape.0[1..].to_vec();
-                    Some(Type {
-                        base: ty.base,
-                        sign: ty.sign,
-                        shape: if rest.is_empty() { None } else { Some(Shape(rest)) },
-                        precision: ty.precision.clone(),
-                    })
-                } else {
-                    let mut dims = shape.0.clone();
-                    dims[0] = Dim::Known(indices.len() as u64);
-                    Some(Type { shape: Some(Shape(dims)), ..ty })
+                Selector::Shape => {
+                    ty = self.apply_dimension_run(ty, &run, span)?;
+                    run.clear();
+                    let rank = ty.shape.as_ref().map(|s| s.rank()).unwrap_or(0);
+                    ty = Type {
+                        base: Base::Int,
+                        sign: None,
+                        shape: Some(Shape(vec![Dim::Known(rank as u64)])),
+                        precision: None,
+                    };
                 }
-            }
-            Selector::Range { from, to, by } => {
-                let want = Type::scalar(Base::Int);
-                self.expr(from, Some(&want));
-                self.expr(to, Some(&want));
-                if let Some(b) = by {
-                    self.expr(b, Some(&want));
-                }
-                Some(ty)
+                _ => run.push(sel),
             }
         }
+        self.apply_dimension_run(ty, &run, span)
+    }
+
+    fn apply_dimension_run(&mut self, ty: Type, run: &[&Selector], span: Span) -> Option<Type> {
+        if run.is_empty() {
+            return Some(ty);
+        }
+        let Some(shape) = ty.shape.clone() else {
+            self.err(
+                E_SHAPE_MISMATCH,
+                span,
+                format!("{} is not an array, so it cannot be selected from.", ty.render()),
+                "selectors apply to vectors, matrices and tensors.",
+            );
+            return None;
+        };
+        if run.len() > shape.rank() {
+            self.err(
+                E_SHAPE_MISMATCH,
+                span,
+                format!(
+                    "{} selectors were given, but {} has {} dimension{}.",
+                    run.len(),
+                    ty.render(),
+                    shape.rank(),
+                    if shape.rank() == 1 { "" } else { "s" }
+                ),
+                "one selector addresses one dimension.",
+            );
+            return None;
+        }
+
+        let mut dims: Vec<Dim> = Vec::new();
+        for (i, sel) in run.iter().enumerate() {
+            match sel {
+                Selector::All => dims.push(shape.0[i].clone()),
+                Selector::Indices(items) => {
+                    for e in items.iter() {
+                        self.expr(e, Some(&Type::scalar(Base::Int)));
+                    }
+                    // One index collapses the dimension; several keep it, resized.
+                    if items.len() > 1 {
+                        dims.push(Dim::Known(items.len() as u64));
+                    }
+                }
+                Selector::Range { from, to, by } => {
+                    let want = Type::scalar(Base::Int);
+                    self.expr(from, Some(&want));
+                    self.expr(to, Some(&want));
+                    if let Some(b) = by {
+                        self.expr(b, Some(&want));
+                    }
+                    // The length is knowable whenever the bounds are literals.
+                    dims.push(match range_length(from, to, by.as_deref()) {
+                        Some(n) => Dim::Known(n),
+                        None => Dim::Unknown,
+                    });
+                }
+                Selector::Length | Selector::Shape => unreachable!("handled above"),
+            }
+        }
+        // Dimensions with no selector are kept whole.
+        for d in shape.0.iter().skip(run.len()) {
+            dims.push(d.clone());
+        }
+
+        Some(Type {
+            base: ty.base,
+            sign: ty.sign,
+            shape: if dims.is_empty() { None } else { Some(Shape(dims)) },
+            precision: ty.precision.clone(),
+        })
     }
 
     fn binary(
@@ -497,8 +554,28 @@ impl<'a> Checker<'a> {
         let a = self.expr(lhs, operand_expectation);
         let b = self.expr(rhs, operand_expectation.or(a.as_ref()));
 
+        // Rule A: a *bare* array reference sums, so it is scalar here. One carrying a
+        // selector stays an array, and the operation runs elementwise.
+        // The array operators are the exception: `· × ⊙ ⊗` imply `:all;`, because they
+        // have no scalar meaning at all.
+        let implies_all = matches!(op, Dot | Cross | Hadamard | Tensor);
+        let keeps_shape = |bare: bool, t: &Type| {
+            (implies_all || !bare) && t.is_array()
+        };
+        let a_array = a
+            .as_ref()
+            .and_then(|t| keeps_shape(is_bare_ref(lhs), t).then(|| t.shape.clone().expect("an array")));
+        let b_array = b
+            .as_ref()
+            .and_then(|t| keeps_shape(is_bare_ref(rhs), t).then(|| t.shape.clone().expect("an array")));
+
         if comparison {
-            return Some(Type::scalar(Base::Bool));
+            // An elementwise comparison produces an array of bools.
+            let shape = a_array.clone().or(b_array.clone());
+            return Some(match shape {
+                Some(s) => Type { base: Base::Bool, sign: None, shape: Some(s), precision: None },
+                None => Type::scalar(Base::Bool),
+            });
         }
 
         let (a, b) = (a?, b?);
@@ -529,7 +606,15 @@ impl<'a> Checker<'a> {
                 // it does not pin, and that is an error rather than a guess.
                 match expected.map(|t| t.element()) {
                     Some(t) if matches!(t.base, Base::Rat | Base::Deci | Base::InfNum) => t.base,
-                    Some(t) if t.base == Base::Int => Base::Int,
+                    Some(t) if t.base == Base::Int => {
+                        self.err(
+                            E_MISMATCH,
+                            span,
+                            "division does not produce a whole number, so it cannot land in an int.",
+                            "use // for truncating division, or declare the result :deci or :rat.",
+                        );
+                        return None;
+                    }
                     _ => {
                         self.err(
                             E_AMBIGUOUS,
@@ -553,7 +638,26 @@ impl<'a> Checker<'a> {
             _ => None,
         };
 
-        Some(Type { base, sign, shape: None, precision: None })
+        // An elementwise operation keeps its shape; a scalar on the other side
+        // broadcasts across it.
+        if let (Some(x), Some(y)) = (&a_array, &b_array) {
+            if !x.agrees_with(y) {
+                self.err(
+                    E_SHAPE_MISMATCH,
+                    span,
+                    format!(
+                        "elementwise operations need matching shapes, but these are {} and {}.",
+                        x.render(),
+                        y.render()
+                    ),
+                    "make the shapes agree.",
+                );
+                return None;
+            }
+        }
+        let shape = a_array.or(b_array);
+
+        Some(Type { base, sign, shape, precision: None })
     }
 
     fn array_operator(&mut self, op: BinOp, a: &Type, b: &Type, span: Span) -> Option<Type> {
@@ -919,6 +1023,47 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// A refinement is a promise, so a literal that breaks it is caught here rather
+    /// than surviving to runtime.
+    fn check_literal_value(&mut self, text: &str, ty: &Type, span: Span) {
+        let negative = text.starts_with('-');
+        let is_zero = text
+            .trim_start_matches(['-', '+'])
+            .chars()
+            .all(|c| c == '0' || c == '.');
+
+        match ty.sign {
+            Some(Sign::Positive) if negative || is_zero => self.err(
+                E_SIGN_VIOLATION,
+                span,
+                format!("'{text}' is not strictly positive, but the type says +{}.", ty.base.name()),
+                "zero lives only in the unprefixed types; use a plain type, or a positive value.",
+            ),
+            Some(Sign::Negative) if !negative || is_zero => self.err(
+                E_SIGN_VIOLATION,
+                span,
+                format!("'{text}' is not strictly negative, but the type says -{}.", ty.base.name()),
+                "zero lives only in the unprefixed types; use a plain type, or a negative value.",
+            ),
+            _ => {}
+        }
+
+        // A stated width is a promise about range, so check the literal fits.
+        if let (Base::Int, Some(Precision::Bits(bits))) = (ty.base, &ty.precision) {
+            if let Ok(value) = text.parse::<i128>() {
+                let (low, high) = int_range(*bits, ty.sign);
+                if value < low || value > high {
+                    self.err(
+                        E_OVERFLOW,
+                        span,
+                        format!("{value} does not fit in {} [{bits} bit], which holds {low} to {high}.", ty.render()),
+                        "widen the type, or use infnum.",
+                    );
+                }
+            }
+        }
+    }
+
     fn check_precision(&mut self, ty: &Type, span: Span) {
         let Some(p) = &ty.precision else { return };
         match (ty.base, p) {
@@ -933,6 +1078,12 @@ impl<'a> Checker<'a> {
                 span,
                 format!("{b} is not an IEEE decimal format."),
                 "decimals are 32, 64 or 128 bit. decimal128 gives 34 digits, which is what financial systems use.",
+            ),
+            (_, Precision::Bits(b)) if !matches!(b, 8 | 16 | 32 | 64 | 128) => self.err(
+                E_BAD_WIDTH,
+                span,
+                format!("{b} is not a width AHPCL offers."),
+                "the widths are 8, 16, 32, 64 and 128.",
             ),
             _ => {}
         }
@@ -950,6 +1101,54 @@ impl<'a> Checker<'a> {
                 None => "check the spelling, and that it is declared before this point.".to_string(),
             },
         );
+    }
+}
+
+/// The range a width holds. A `+int` cannot be negative, so the sign bit is free —
+/// which is where unsigned ranges come from without a separate `uint` family.
+fn int_range(bits: u32, sign: Option<Sign>) -> (i128, i128) {
+    let width = bits.min(127);
+    match sign {
+        Some(Sign::Positive) => (1, (1i128 << width) - 1),
+        Some(Sign::Negative) => (-((1i128 << width) - 1), -1),
+        None => (-(1i128 << (width - 1)), (1i128 << (width - 1)) - 1),
+    }
+}
+
+/// How many values a literal range covers, when its bounds are known.
+fn range_length(from: &Expr, to: &Expr, by: Option<&Expr>) -> Option<u64> {
+    let literal = |e: &Expr| -> Option<i64> {
+        match &e.kind {
+            ExprKind::Number(t) | ExprKind::Literal(t) => t.parse().ok(),
+            ExprKind::Math(inner) => match &inner.kind {
+                ExprKind::Number(t) | ExprKind::Literal(t) => t.parse().ok(),
+                _ => None,
+            },
+            _ => None,
+        }
+    };
+    let f = literal(from)?;
+    let t = literal(to)?;
+    let step = match by {
+        Some(b) => literal(b)?,
+        None => 1,
+    };
+    if step == 0 {
+        return None;
+    }
+    let span = t - f;
+    if (step > 0 && span < 0) || (step < 0 && span > 0) {
+        return Some(0);
+    }
+    Some((span / step + 1) as u64)
+}
+
+/// Whether an expression is a bare array reference — one with no selector.
+fn is_bare_ref(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ref { selectors, .. } => selectors.is_empty(),
+        ExprKind::Math(inner) => is_bare_ref(inner),
+        _ => false,
     }
 }
 

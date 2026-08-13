@@ -85,6 +85,24 @@ impl<'a> Interpreter<'a> {
         Error::new(code, span, rule, fix)
     }
 
+    fn sum_overflowed(&self, span: Span) -> Error {
+        self.err(
+            E_OVERFLOW,
+            span,
+            "summing this array overflowed the value's precision.",
+            "widen the element type, or use infnum.",
+        )
+    }
+
+    fn not_a_number(&self, v: &Value, span: Span) -> Error {
+        self.err(
+            E_RUNTIME,
+            span,
+            format!("arithmetic needs a number, but this is {}.", v.type_name()),
+            "check the operand's type.",
+        )
+    }
+
     fn tick(&mut self, span: Span) -> Result<(), Error> {
         self.steps += 1;
         if let Some(limit) = self.step_limit {
@@ -146,7 +164,12 @@ impl<'a> Interpreter<'a> {
                         let val = self.expr(value, hint)?;
                         // A bare array reference sums its elements — that holds when
                         // assigning to a scalar, not only inside arithmetic.
-                        let val = if v.ty.rank.is_none() { reduce_array(val) } else { val };
+                        let val = if v.ty.rank.is_none() {
+                            let span = value.span;
+                            try_reduce_array(val).ok_or_else(|| self.sum_overflowed(span))?
+                        } else {
+                            val
+                        };
                         self.define(&b.name, val);
                     } else {
                         self.define(&b.name, Value::Nothing);
@@ -354,15 +377,29 @@ impl<'a> Interpreter<'a> {
                         "check the spelling and that it is declared before this point.",
                     ));
                 };
-                let mut value = base;
-                for sel in selectors {
-                    value = self.select(value, sel, e.span)?;
-                }
-                Ok(value)
+                self.apply_selectors(base, selectors, e.span)
             }
             ExprKind::Binary { op, lhs, rhs } => {
-                let a = self.expr(lhs, hint)?;
-                let b = self.expr(rhs, hint)?;
+                let mut a = self.expr(lhs, hint)?;
+                let mut b = self.expr(rhs, hint)?;
+                // Rule A: a *bare* array reference sums its elements. One carrying a
+                // selector — `('a'):all;` — stays an array, so the operation is
+                // elementwise.
+                //
+                // The array operators are the exception: `· × ⊙ ⊗` imply `:all;`,
+                // because they have no scalar meaning at all.
+                let implies_all = matches!(
+                    op,
+                    BinOp::Dot | BinOp::Cross | BinOp::Hadamard | BinOp::Tensor
+                );
+                if !implies_all {
+                    if is_bare_ref(lhs) {
+                        a = try_reduce_array(a).ok_or_else(|| self.sum_overflowed(lhs.span))?;
+                    }
+                    if is_bare_ref(rhs) {
+                        b = try_reduce_array(b).ok_or_else(|| self.sum_overflowed(rhs.span))?;
+                    }
+                }
                 self.binary(*op, a, b, e.span, hint)
             }
             ExprKind::Unary { op, operand } => {
@@ -401,7 +438,23 @@ impl<'a> Interpreter<'a> {
                 for item in items {
                     match item {
                         Value::Array(a) => {
-                            inner_shape.get_or_insert_with(|| a.shape.clone());
+                            match &inner_shape {
+                                Some(first) if *first != a.shape => {
+                                    // Every handback must produce the same shape, or
+                                    // the array would be ragged.
+                                    return Err(self.err(
+                                        E_RUNTIME,
+                                        l.span,
+                                        format!(
+                                            "every iteration must hand back the same shape, but one gave {:?} and another {:?}.",
+                                            first, a.shape
+                                        ),
+                                        "arrays are rectangular; make each iteration produce the same shape.",
+                                    ));
+                                }
+                                None => inner_shape = Some(a.shape.clone()),
+                                _ => {}
+                            }
                             flat.extend(a.items);
                         }
                         other => flat.push(other),
@@ -528,6 +581,211 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    /// Apply a whole selector chain.
+    ///
+    /// Consecutive index selectors address **successive dimensions** — the first picks
+    /// rows, the second columns, and so on. `:length;` and `:shape;` are questions
+    /// about the array rather than dimension selectors, so they consume whatever has
+    /// been narrowed so far and the chain continues on their result.
+    fn apply_selectors(
+        &mut self,
+        base: Value,
+        selectors: &'a [Selector],
+        span: Span,
+    ) -> Result<Value, Error> {
+        let mut value = base;
+        let mut run: Vec<&Selector> = Vec::new();
+
+        for sel in selectors {
+            match sel {
+                Selector::Length | Selector::Shape => {
+                    value = self.apply_dimension_run(value, &run, span)?;
+                    run.clear();
+                    value = self.query(value, sel, span)?;
+                }
+                _ => run.push(sel),
+            }
+        }
+        self.apply_dimension_run(value, &run, span)
+    }
+
+    /// `:length;` and `:shape;`.
+    fn query(&mut self, value: Value, sel: &Selector, span: Span) -> Result<Value, Error> {
+        let Value::Array(arr) = &value else {
+            return match sel {
+                Selector::Length => Ok(Value::Int(1)),
+                _ => Err(self.err(
+                    E_RUNTIME,
+                    span,
+                    format!("{} is not an array, so it has no shape.", value.type_name()),
+                    "selectors apply to vectors, matrices and tensors.",
+                )),
+            };
+        };
+        Ok(match sel {
+            Selector::Length => Value::Int(arr.items.len() as i128),
+            _ => Value::Array(Array::vector(
+                arr.shape.iter().map(|d| Value::Int(*d as i128)).collect(),
+            )),
+        })
+    }
+
+    /// Apply one run of dimension selectors, one per dimension in order.
+    fn apply_dimension_run(
+        &mut self,
+        value: Value,
+        run: &[&'a Selector],
+        span: Span,
+    ) -> Result<Value, Error> {
+        if run.is_empty() {
+            return Ok(value);
+        }
+        let Value::Array(arr) = value else {
+            return Err(self.err(
+                E_RUNTIME,
+                span,
+                "this is not an array, so it cannot be selected from.",
+                "selectors apply to vectors, matrices and tensors.",
+            ));
+        };
+        if run.len() > arr.shape.len() {
+            return Err(self.err(
+                E_RUNTIME,
+                span,
+                format!(
+                    "{} selectors were given, but this array has {} dimension{}.",
+                    run.len(),
+                    arr.shape.len(),
+                    if arr.shape.len() == 1 { "" } else { "s" }
+                ),
+                "one selector addresses one dimension.",
+            ));
+        }
+
+        // Which positions to keep along each dimension, and whether that dimension
+        // collapses (a single index gives a plain value).
+        let mut picks: Vec<Vec<usize>> = Vec::new();
+        let mut collapse: Vec<bool> = Vec::new();
+        for (dim, sel) in run.iter().enumerate() {
+            let extent = arr.shape[dim];
+            let (chosen, single) = self.positions(sel, extent, span)?;
+            for &p in &chosen {
+                if p >= extent {
+                    return Err(self.err(
+                        E_BOUNDS,
+                        span,
+                        format!(
+                            "index {} is out of range for dimension {} of length {extent}.",
+                            p + 1,
+                            dim + 1
+                        ),
+                        "indices start at 1.",
+                    ));
+                }
+            }
+            picks.push(chosen);
+            collapse.push(single);
+        }
+        // Dimensions with no selector are kept whole.
+        for dim in run.len()..arr.shape.len() {
+            picks.push((0..arr.shape[dim]).collect());
+            collapse.push(false);
+        }
+
+        let strides: Vec<usize> = (0..arr.shape.len())
+            .map(|d| arr.shape[d + 1..].iter().product::<usize>().max(1))
+            .collect();
+
+        let mut items = Vec::new();
+        let mut counter = vec![0usize; picks.len()];
+        loop {
+            let offset: usize = counter
+                .iter()
+                .enumerate()
+                .map(|(d, &c)| picks[d][c] * strides[d])
+                .sum();
+            items.push(arr.items[offset].clone());
+
+            let mut d = picks.len();
+            loop {
+                if d == 0 {
+                    let shape: Vec<usize> = picks
+                        .iter()
+                        .zip(&collapse)
+                        .filter(|(_, c)| !**c)
+                        .map(|(p, _)| p.len())
+                        .collect();
+                    return Ok(if shape.is_empty() {
+                        items.into_iter().next().expect("one value")
+                    } else {
+                        Value::Array(Array { items, shape })
+                    });
+                }
+                d -= 1;
+                counter[d] += 1;
+                if counter[d] < picks[d].len() {
+                    break;
+                }
+                counter[d] = 0;
+            }
+        }
+    }
+
+    /// Zero-based positions a selector picks along one dimension, and whether it was a
+    /// single index (which collapses the dimension).
+    fn positions(
+        &mut self,
+        sel: &'a Selector,
+        extent: usize,
+        span: Span,
+    ) -> Result<(Vec<usize>, bool), Error> {
+        match sel {
+            Selector::All => Ok(((0..extent).collect(), false)),
+            Selector::Indices(items) => {
+                let mut out = Vec::new();
+                for item in items {
+                    let v = self.expr(item, Some(Numeric::Int))?;
+                    out.push(as_index(&v, item.span)? - 1);
+                }
+                let single = out.len() == 1;
+                Ok((out, single))
+            }
+            Selector::Range { from, to, by } => {
+                let f = as_int(&self.expr(from, Some(Numeric::Int))?, from.span)?;
+                let t = as_int(&self.expr(to, Some(Numeric::Int))?, to.span)?;
+                let step = match by {
+                    Some(b) => as_int(&self.expr(b, Some(Numeric::Int))?, b.span)?,
+                    None => 1,
+                };
+                if step == 0 {
+                    return Err(self.err(
+                        E_RUNTIME,
+                        span,
+                        "a selector step of 0 would never finish.",
+                        "use a non-zero step.",
+                    ));
+                }
+                let mut out = Vec::new();
+                let mut i = f;
+                while (step > 0 && i <= t) || (step < 0 && i >= t) {
+                    if i < 1 {
+                        return Err(self.err(
+                            E_BOUNDS,
+                            span,
+                            format!("{i} is not a valid index."),
+                            "indices start at 1.",
+                        ));
+                    }
+                    out.push(i as usize - 1);
+                    i += step;
+                }
+                Ok((out, false))
+            }
+            Selector::Length | Selector::Shape => unreachable!("handled by apply_selectors"),
+        }
+    }
+
+    #[allow(dead_code)]
     fn select(&mut self, value: Value, sel: &'a Selector, span: Span) -> Result<Value, Error> {
         let arr = match &value {
             Value::Array(a) => a.clone(),
@@ -620,15 +878,66 @@ impl<'a> Interpreter<'a> {
             return self.array_binary(op, a, b, span);
         }
 
-        // A bare array reference sums its elements, so arithmetic on it is scalar.
-        let a = reduce_array(a);
-        let b = reduce_array(b);
+        // Anything still an array here came through `:all;`, so the operation runs
+        // elementwise. A scalar on the other side broadcasts across it.
+        if matches!(a, Value::Array(_)) || matches!(b, Value::Array(_)) {
+            return self.elementwise(op, a, b, span, hint);
+        }
 
         if matches!(op, Eq | NotEq | Less | Greater | LessEq | GreaterEq) {
             return self.compare(op, a, b, span);
         }
 
         self.arithmetic(op, a, b, span, hint)
+    }
+
+    /// Apply `op` position by position, broadcasting a scalar across the array.
+    fn elementwise(
+        &mut self,
+        op: BinOp,
+        a: Value,
+        b: Value,
+        span: Span,
+        hint: Option<Numeric>,
+    ) -> Result<Value, Error> {
+        let (items, shape) = match (&a, &b) {
+            (Value::Array(x), Value::Array(y)) => {
+                if x.items.len() != y.items.len() {
+                    return Err(self.err(
+                        E_RUNTIME,
+                        span,
+                        format!(
+                            "elementwise operations need matching shapes, but these are {:?} and {:?}.",
+                            x.shape, y.shape
+                        ),
+                        "make the shapes agree.",
+                    ));
+                }
+                let pairs: Vec<(Value, Value)> =
+                    x.items.iter().cloned().zip(y.items.iter().cloned()).collect();
+                (pairs, x.shape.clone())
+            }
+            (Value::Array(x), scalar) => (
+                x.items.iter().cloned().map(|v| (v, scalar.clone())).collect(),
+                x.shape.clone(),
+            ),
+            (scalar, Value::Array(y)) => (
+                y.items.iter().cloned().map(|v| (scalar.clone(), v)).collect(),
+                y.shape.clone(),
+            ),
+            _ => unreachable!("at least one side is an array"),
+        };
+
+        let mut out = Vec::with_capacity(items.len());
+        for (p, q) in items {
+            let v = if matches!(op, BinOp::Eq | BinOp::NotEq | BinOp::Less | BinOp::Greater | BinOp::LessEq | BinOp::GreaterEq) {
+                self.compare(op, p, q, span)?
+            } else {
+                self.arithmetic(op, p, q, span, hint)?
+            };
+            out.push(v);
+        }
+        Ok(Value::Array(Array { items: out, shape }))
     }
 
     fn compare(&mut self, op: BinOp, a: Value, b: Value, span: Span) -> Result<Value, Error> {
@@ -664,8 +973,8 @@ impl<'a> Interpreter<'a> {
     ) -> Result<Value, Error> {
         use BinOp::*;
 
-        let overflow = |this: &Self| {
-            this.err(
+        let overflow = |_this: &Self| {
+            Error::new(
                 E_OVERFLOW,
                 span,
                 "this calculation overflowed the value's precision.",
@@ -711,34 +1020,57 @@ impl<'a> Interpreter<'a> {
         }
 
         // Division follows the context: rat where exactness was asked for, decimal
-        // otherwise.
+        // otherwise. Both paths are exact — no f64 anywhere.
         if op == Div {
-            let (x, y) = (to_rational(&a, span)?, to_rational(&b, span)?);
-            let r = x
-                .div(y)
-                .ok_or_else(|| self.err(E_DIV_ZERO, span, "division by zero.", "check the divisor."))?;
-            return Ok(match hint {
-                Some(Numeric::Rat) => Value::Rat(r),
-                Some(Numeric::Int) => Value::Int(r.num / r.den),
-                _ => Value::Deci(Decimal::from_f64(r.to_f64(), 15).normalised()),
-            });
+            if let Some(Numeric::Rat) = hint {
+                let (x, y) = (to_rational(&a, span)?, to_rational(&b, span)?);
+                let r = x.div(y).ok_or_else(|| {
+                    self.err(E_DIV_ZERO, span, "division by zero.", "check the divisor.")
+                })?;
+                return Ok(Value::Rat(r));
+            }
+            let (x, y) = (
+                to_decimal(&a).ok_or_else(|| self.not_a_number(&a, span))?,
+                to_decimal(&b).ok_or_else(|| self.not_a_number(&b, span))?,
+            );
+            let d = x.div_exact(y, 15).ok_or_else(|| {
+                if y.is_zero() {
+                    self.err(E_DIV_ZERO, span, "division by zero.", "check the divisor.")
+                } else {
+                    overflow(self)
+                }
+            })?;
+            return Ok(Value::Deci(d.normalised()));
         }
 
         // Exact decimal arithmetic where either side is a decimal.
         if matches!(a, Value::Deci(_)) || matches!(b, Value::Deci(_)) {
             if let (Some(x), Some(y)) = (to_decimal(&a), to_decimal(&b)) {
+                if matches!(op, IntDiv | Mod) && y.is_zero() {
+                    return Err(self.err(
+                        E_DIV_ZERO,
+                        span,
+                        if op == IntDiv { "division by zero." } else { "remainder by zero." },
+                        "check the divisor.",
+                    ));
+                }
+                // `//` truncates and gives a whole number; `mod` gives the remainder.
+                // They are different operations.
+                if op == IntDiv {
+                    return x.int_div(y).map(Value::Int).ok_or_else(|| overflow(self));
+                }
                 let out = match op {
                     Add => x.add(y),
                     Sub => x.sub(y),
                     Mul => x.mul(y),
-                    Pow => {
-                        let e = to_decimal(&b).map(|d| d.to_f64()).unwrap_or(0.0);
-                        Some(Decimal::from_f64(x.to_f64().powf(e), 15))
-                    }
-                    Mod | IntDiv => Some(Decimal::from_f64(
-                        x.to_f64().rem_euclid(y.to_f64().max(f64::MIN_POSITIVE)),
-                        15,
-                    )),
+                    // Integer exponents stay exact rather than round-tripping f64.
+                    Pow => match y.normalised() {
+                        e if e.scale == 0 && e.mantissa >= 0 && e.mantissa <= u32::MAX as i128 => {
+                            x.pow_int(e.mantissa as u32)
+                        }
+                        _ => Decimal::from_f64_checked(x.to_f64().powf(y.to_f64()), 15),
+                    },
+                    Mod => x.rem(y),
                     _ => None,
                 };
                 return out.map(|d| Value::Deci(d.normalised())).ok_or_else(|| overflow(self));
@@ -751,13 +1083,8 @@ impl<'a> Interpreter<'a> {
             Add => x.add(y),
             Sub => x.sub(y),
             Mul => x.mul(y),
-            Pow => {
-                let e = y.to_f64();
-                Some(Rational::new(
-                    (x.to_f64().powf(e) * 1_000_000.0).round() as i128,
-                    1_000_000,
-                ).unwrap_or(Rational::from_int(0)))
-            }
+            // An integer exponent keeps a rational exact: (1/3)² is 1/9.
+            Pow if y.den == 1 && y.num.abs() <= i32::MAX as i128 => x.pow_int(y.num as i32),
             _ => None,
         };
         out.map(Value::Rat).ok_or_else(|| overflow(self))
@@ -867,7 +1194,7 @@ impl<'a> Interpreter<'a> {
     fn unary(&mut self, op: UnOp, v: Value, span: Span, hint: Option<Numeric>) -> Result<Value, Error> {
         match op {
             UnOp::Not => Ok(Value::Bool(!as_bool(&v, span)?)),
-            UnOp::Neg => match reduce_array(v) {
+            UnOp::Neg => match try_reduce_array(v).ok_or_else(|| self.sum_overflowed(span))? {
                 Value::Int(n) => Ok(Value::Int(-n)),
                 Value::Deci(d) => Ok(Value::Deci(Decimal::new(-d.mantissa, d.scale))),
                 Value::Rat(r) => Ok(Value::Rat(Rational { num: -r.num, den: r.den })),
@@ -878,7 +1205,7 @@ impl<'a> Interpreter<'a> {
                     "check the operand.",
                 )),
             },
-            UnOp::Abs => match reduce_array(v) {
+            UnOp::Abs => match try_reduce_array(v).ok_or_else(|| self.sum_overflowed(span))? {
                 Value::Int(n) => Ok(Value::Int(n.abs())),
                 Value::Deci(d) => Ok(Value::Deci(Decimal::new(d.mantissa.abs(), d.scale))),
                 Value::Rat(r) => Ok(Value::Rat(Rational { num: r.num.abs(), den: r.den })),
@@ -890,9 +1217,11 @@ impl<'a> Interpreter<'a> {
                 )),
             },
             UnOp::Floor | UnOp::Ceil => {
-                let f = reduce_array(v).to_f64().ok_or_else(|| {
-                    self.err(E_RUNTIME, span, "this needs a number.", "check the operand.")
-                })?;
+                let f = try_reduce_array(v)
+                    .and_then(|r| r.to_f64())
+                    .ok_or_else(|| {
+                        self.err(E_RUNTIME, span, "this needs a number.", "check the operand.")
+                    })?;
                 Ok(Value::Int(if op == UnOp::Floor {
                     f.floor() as i128
                 } else {
@@ -902,9 +1231,11 @@ impl<'a> Interpreter<'a> {
             _ => {
                 // sqrt, sin, cos, tan, log, ln — usually irrational, so the result is a
                 // rounded decimal. The Informer reports the rounding at check time.
-                let f = reduce_array(v).to_f64().ok_or_else(|| {
-                    self.err(E_RUNTIME, span, "this operation needs a number.", "check the operand.")
-                })?;
+                let f = try_reduce_array(v)
+                    .and_then(|r| r.to_f64())
+                    .ok_or_else(|| {
+                        self.err(E_RUNTIME, span, "this operation needs a number.", "check the operand.")
+                    })?;
                 if op == UnOp::Sqrt && f < 0.0 {
                     return Err(self.err(
                         E_RUNTIME,
@@ -974,28 +1305,35 @@ fn coerce(v: Value, hint: Option<Numeric>) -> Value {
 }
 
 /// A bare array reference sums its elements — rule A from docs/types.md.
-fn reduce_array(v: Value) -> Value {
+///
+/// Returns `None` on overflow rather than wrapping, which every other integer path
+/// already did.
+fn try_reduce_array(v: Value) -> Option<Value> {
     match v {
         Value::Array(a) => {
             let mut total = Value::Int(0);
             for item in a.items {
                 total = match (total, item) {
-                    (Value::Int(x), Value::Int(y)) => Value::Int(x + y),
+                    (Value::Int(x), Value::Int(y)) => Value::Int(x.checked_add(y)?),
                     (x, y) => {
-                        let (a, b) = (to_decimal(&x), to_decimal(&y));
-                        match (a, b) {
-                            (Some(p), Some(q)) => p
-                                .add(q)
-                                .map(|d| Value::Deci(d.normalised()))
-                                .unwrap_or(Value::Int(0)),
-                            _ => x,
-                        }
+                        let (p, q) = (to_decimal(&x)?, to_decimal(&y)?);
+                        Value::Deci(p.add(q)?.normalised())
                     }
                 };
             }
-            total
+            Some(total)
         }
-        other => other,
+        other => Some(other),
+    }
+}
+
+/// Whether an expression is a bare array reference — one with no selector — which is
+/// what rule A reduces.
+fn is_bare_ref(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ref { selectors, .. } => selectors.is_empty(),
+        ExprKind::Math(inner) => is_bare_ref(inner),
+        _ => false,
     }
 }
 

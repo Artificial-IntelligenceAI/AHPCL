@@ -322,3 +322,81 @@ fn the_stats_example_checks_clean() {
     let got = codes(src);
     assert!(got.is_empty(), "stats should check clean, got {got:?}");
 }
+
+// ── regressions found by the stress-testing pass (2026-08-12) ───────────────
+
+#[test]
+fn a_literal_must_satisfy_its_sign_refinement() {
+    // A refinement is a promise; a literal that breaks it should never reach runtime.
+    rejects("var:+int 'n' = '-5'.", "AHPCL-SIGN-0001");
+    // Zero lives only in the unprefixed types.
+    rejects("var:+int 'n' = '0'.", "AHPCL-SIGN-0001");
+    rejects("var:-int 'n' = '5'.", "AHPCL-SIGN-0001");
+    clean("var:+int 'n' = '5'.");
+}
+
+#[test]
+fn a_literal_must_fit_the_stated_width() {
+    rejects("var:int 'x' [8 bit] = '1000'.", "AHPCL-PREC-0004");
+    clean("var:int 'x' [8 bit] = '100'.");
+    // A +int cannot be negative, so the sign bit is free: 1 … 255.
+    clean("var:+int 'x' [8 bit] = '200'.");
+}
+
+#[test]
+fn only_the_offered_widths_are_accepted() {
+    rejects("var:int 'x' [7 bit] = '5'.", "AHPCL-PREC-0005");
+    clean("var:int 'x' [16 bit] = '5'.");
+}
+
+#[test]
+fn division_cannot_land_in_an_int() {
+    // syntax.md: `//` is how truncation is requested.
+    rejects("var:int 'q' = math { 10 / 4 }.", "AHPCL-TYPE-0002");
+    clean("var:int 'q' = math { 10 // 4 }.");
+}
+
+#[test]
+fn a_conditional_used_for_its_value_needs_an_else() {
+    rejects(
+        "var:int 'x' = '0'.\n\
+         var:int 'v' = if math { ('x') > 5 } { handback '5'. }.",
+        "AHPCL-TYPE-0002",
+    );
+    clean(
+        "var:int 'x' = '0'.\n\
+         var:int 'v' = if math { ('x') > 5 } { handback '5'. }, else { handback '0'. }.",
+    );
+}
+
+#[test]
+fn elementwise_operations_keep_their_shape() {
+    clean(
+        "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+         var:vector:int 'u' [3] = math { ('a'):all; + 1 }.",
+    );
+    // Mismatched shapes are still caught.
+    rejects(
+        "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+         var:vector:int 'b' [4] = {'1','2','3','4'}.\n\
+         var:vector:int 'c' [3] = math { ('a'):all; + ('b'):all; }.",
+        "AHPCL-SHAPE-0001",
+    );
+}
+
+#[test]
+fn a_range_selector_reports_the_length_it_selects() {
+    clean(
+        "var:vector:int 'a' [5] = {'10','20','30','40','50'}.\n\
+         var:vector:int 'o' [3] = math { ('a'):1 to 5 by 2; }.",
+    );
+}
+
+#[test]
+fn too_many_selectors_for_the_rank_is_an_error() {
+    rejects(
+        "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+         var:int 'v' = math { ('a'):1;:1; }.",
+        "AHPCL-SHAPE-0001",
+    );
+}

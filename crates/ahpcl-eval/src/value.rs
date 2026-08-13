@@ -83,6 +83,65 @@ impl Decimal {
         })
     }
 
+    /// Exact integer power, by repeated exact multiplication. Going through `f64`
+    /// here would lose digits from the 13th decimal place onwards.
+    pub fn pow_int(self, exp: u32) -> Option<Decimal> {
+        let mut acc = Decimal::from_int(1);
+        for _ in 0..exp {
+            acc = acc.mul(self)?;
+        }
+        Some(acc)
+    }
+
+    /// Exact division when the quotient terminates within `max_digits`, otherwise the
+    /// correctly-rounded value at that many places. Long division, so no `f64` is
+    /// involved and the digits are the true ones.
+    pub fn div_exact(self, other: Decimal, max_digits: u32) -> Option<Decimal> {
+        if other.is_zero() {
+            return None;
+        }
+        // a/b where a = am/10^as and b = bm/10^bs  ⇒  (am * 10^bs) / (bm * 10^as)
+        let mut num = self.mantissa.checked_mul(pow10(other.scale)?)?;
+        let den = other.mantissa.checked_mul(pow10(self.scale)?)?;
+
+        let negative = (num < 0) != (den < 0);
+        let num_abs = num.unsigned_abs();
+        let den_abs = den.unsigned_abs();
+
+        let mut digits = num_abs / den_abs;
+        let mut remainder = num_abs % den_abs;
+        let mut scale = 0u32;
+        while remainder != 0 && scale < max_digits {
+            digits = digits.checked_mul(10)?;
+            remainder = remainder.checked_mul(10)?;
+            digits += remainder / den_abs;
+            remainder %= den_abs;
+            scale += 1;
+        }
+        // Round the last digit rather than truncating.
+        if remainder != 0 && remainder * 2 >= den_abs {
+            digits += 1;
+        }
+        num = digits as i128;
+        Some(Decimal { mantissa: if negative { -num } else { num }, scale })
+    }
+
+    /// Truncating division, which is what `//` asks for.
+    pub fn int_div(self, other: Decimal) -> Option<i128> {
+        if other.is_zero() {
+            return None;
+        }
+        let num = self.mantissa.checked_mul(pow10(other.scale)?)?;
+        let den = other.mantissa.checked_mul(pow10(self.scale)?)?;
+        Some(num.div_euclid(den))
+    }
+
+    /// Remainder, exactly.
+    pub fn rem(self, other: Decimal) -> Option<Decimal> {
+        let q = self.int_div(other)?;
+        self.sub(other.mul(Decimal::from_int(q))?)
+    }
+
     pub fn compare(self, other: Decimal) -> Option<std::cmp::Ordering> {
         let (a, b, _) = Decimal::align(self, other)?;
         Some(a.cmp(&b))
@@ -105,11 +164,27 @@ impl Decimal {
         self.mantissa as f64 / 10f64.powi(self.scale as i32)
     }
 
-    /// Round a float to `digits` decimal places. Used for irrational results, which
-    /// the Informer reports as rounded.
-    pub fn from_f64(v: f64, digits: u32) -> Decimal {
+    /// Round a float to `digits` decimal places. Used only for genuinely irrational
+    /// results — everything exact takes an exact path.
+    ///
+    /// Returns `None` rather than saturating: an out-of-range `f64 as i128` cast in
+    /// Rust clamps to `i128::MAX`, which would turn an overflow into a plausible-looking
+    /// wrong answer.
+    pub fn from_f64_checked(v: f64, digits: u32) -> Option<Decimal> {
+        if !v.is_finite() {
+            return None;
+        }
         let factor = 10f64.powi(digits as i32);
-        Decimal { mantissa: (v * factor).round() as i128, scale: digits }
+        let scaled = (v * factor).round();
+        if scaled.abs() >= i128::MAX as f64 {
+            return None;
+        }
+        Some(Decimal { mantissa: scaled as i128, scale: digits })
+    }
+
+    /// Convenience for places where the value is known to be in range.
+    pub fn from_f64(v: f64, digits: u32) -> Decimal {
+        Decimal::from_f64_checked(v, digits).unwrap_or(Decimal { mantissa: 0, scale: 0 })
     }
 }
 
@@ -194,6 +269,20 @@ impl Rational {
             return None;
         }
         Rational::new(self.num.checked_mul(o.den)?, self.den.checked_mul(o.num)?)
+    }
+
+    /// Exact integer power. Going through `f64` here turned `(1/3)²` into
+    /// `111111/1000000`, defeating the whole point of the type.
+    pub fn pow_int(self, exp: i32) -> Option<Rational> {
+        if exp < 0 {
+            let base = Rational::new(self.den, self.num)?;
+            return base.pow_int(-exp);
+        }
+        let mut acc = Rational::from_int(1);
+        for _ in 0..exp {
+            acc = acc.mul(self)?;
+        }
+        Some(acc)
     }
 
     pub fn compare(self, o: Rational) -> Option<std::cmp::Ordering> {
@@ -362,6 +451,64 @@ mod tests {
             Decimal::parse("0.9").unwrap().compare(Decimal::parse("0.10").unwrap()),
             Some(Ordering::Greater)
         );
+    }
+
+    #[test]
+    fn integer_powers_are_exact_for_rationals() {
+        // (1/3)² is exactly 1/9, not 111111/1000000.
+        let third = Rational::new(1, 3).unwrap();
+        assert_eq!(third.pow_int(2).unwrap(), Rational::new(1, 9).unwrap());
+        assert_eq!(third.pow_int(3).unwrap(), Rational::new(1, 27).unwrap());
+    }
+
+    #[test]
+    fn integer_powers_are_exact_for_decimals() {
+        // 1.1^20 to its true digits, not the f64 approximation.
+        let a = Decimal::parse("1.1").unwrap();
+        let p = a.pow_int(20).unwrap();
+        assert!(
+            p.to_string().starts_with("6.7274999493256"),
+            "got {p}"
+        );
+    }
+
+    #[test]
+    fn division_that_terminates_is_exact() {
+        let a = Decimal::parse("1").unwrap();
+        let b = Decimal::parse("8").unwrap();
+        assert_eq!(a.div_exact(b, 30).unwrap().to_string(), "0.125");
+    }
+
+    #[test]
+    fn division_that_repeats_is_correctly_rounded() {
+        // 58/3 = 19.333… — the digits must be 3s, not the f64 bit pattern
+        // 19.333333333333332.
+        let a = Decimal::parse("58").unwrap();
+        let b = Decimal::parse("3").unwrap();
+        assert_eq!(a.div_exact(b, 15).unwrap().to_string(), "19.333333333333333");
+    }
+
+    #[test]
+    fn truncating_division_and_remainder_are_separate_operations() {
+        let a = Decimal::parse("7.5").unwrap();
+        let b = Decimal::from_int(2);
+        assert_eq!(a.int_div(b), Some(3), "// truncates");
+        assert_eq!(a.rem(b).unwrap().to_string(), "1.5", "mod is the remainder");
+    }
+
+    #[test]
+    fn dividing_by_zero_is_refused_in_every_form() {
+        let a = Decimal::parse("7.5").unwrap();
+        let zero = Decimal::from_int(0);
+        assert!(a.div_exact(zero, 15).is_none());
+        assert!(a.int_div(zero).is_none());
+        assert!(a.rem(zero).is_none());
+    }
+
+    #[test]
+    fn an_out_of_range_float_does_not_saturate_into_a_plausible_number() {
+        assert!(Decimal::from_f64_checked(1e40, 0).is_none());
+        assert!(Decimal::from_f64_checked(f64::INFINITY, 0).is_none());
     }
 
     #[test]
