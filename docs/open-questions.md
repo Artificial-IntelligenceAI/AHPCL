@@ -34,8 +34,9 @@ decided.
 
 ## Gaps found by writing a sample program (2026-08-12)
 
-**25. Division.** The operator table has `* x` multiply, `^ ** xx` power, `+ -` add/subtract —
-and no division at all. `÷` was listed as safe-to-alias, but the base operator was never chosen.
+**25. What does division produce?** Spelling is decided (`/`, `÷`). `math { 1 / 3 }` has no exact
+decimal answer, so this is what forces `rat` off the deferred list. Integer division and remainder
+also have no spelling.
 
 **26. Equality.** `=` already means assignment, so `math { ('i') = 3 }` conflicts. `>` and `<`
 appear in examples; equality, inequality, `>=` and `<=` have no decided spelling.

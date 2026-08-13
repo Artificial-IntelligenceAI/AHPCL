@@ -180,8 +180,12 @@ digit-lookahead rule.
 | Operation | Spellings | Status |
 |---|---|---|
 | Multiply | `*`, `x` (spaced) | **DECIDED** |
+| Divide | `/`, `÷` | **DECIDED** |
 | Power | `^`, `**`, `xx` | **DECIDED** |
 | Add / subtract | `+`, `-` | **DECIDED** (implied throughout) |
+
+What division *produces* is a separate question — see [types.md](types.md). Integer division and
+remainder have no decided spelling.
 
 `×` was briefly a multiplication alias and was **removed** on 2026-08-10 — it now means cross
 product, below.
