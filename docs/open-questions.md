@@ -34,8 +34,9 @@ decided.
 
 ## Gaps found by writing sample programs
 
-**31. What counts as parseable text** for `parse`. The builtin itself is decided. Format-aware
-reading (CSV straight to a typed array) remains a **later** addition.
+**31. More `parse` options** — `binary`/`octal`, `allow-empty`, and `percent` (reading `"50%"` as
+0.5, using the `%` kept free from `mod`). The roster so far is decided. Format-aware reading (CSV
+straight to a typed array) remains a **later** addition.
 
 **32. Runtime failure wording** — the greeting line, and whether `AHPCL-RUN-0001` is the right code
 category. The behaviour is decided: failures stop the program.

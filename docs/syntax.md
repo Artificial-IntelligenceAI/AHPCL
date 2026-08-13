@@ -1131,7 +1131,47 @@ Rejected: one builtin per type (`to-int`, `to-deci` — grows with every type, a
 a maths operator (`math { num ('raw') }`, which would make the one fallible thing inside
 `math { }`).
 
-**OPEN:** what counts as parseable text.
+#### Parse options — **DECIDED**
+
+Strict by default, with **composable per-call options**. `[…]` arguments are already
+space-separated, so options stack:
+
+```
+parse[('raw')]                            # strict
+parse[('raw') trim]
+parse[('raw') trim scientific]
+parse[('raw') group:"," decimal:"."]
+```
+
+| Option | Accepts |
+|---|---|
+| *(none)* | `"42"`, `"-42"`, `"3.14"` — strict |
+| `trim` | `" 42 "` — surrounding whitespace, which cannot change a value's meaning |
+| `scientific` | `"1e5"`, `"2.5E-3"` |
+| `hex` | `"0x2A"` |
+| `unicode-digits` | `"๔๒"`, `"١٢٣"` — Thai, Arabic-Indic and the rest |
+| `decimal:"."` | which character is the decimal point |
+| `group:","` | which character separates thousands |
+
+**`decimal:` and `group:` solve the `"1,000"` trap rather than dodging it.** The difficulty was
+never that `1,000` is unparseable — it is that it means one thousand in Britain and *one* in
+Germany. Requiring the convention to be stated removes the ambiguity without picking a locale on
+the programmer's behalf:
+
+```
+parse[('raw') group:"," decimal:"."]      # 1,000.5  →  1000.5
+parse[('raw') group:"." decimal:","]      # 1.000,5  →  1000.5
+```
+
+They follow the `key:value` shape used by `task:`, `flag:` and the rest.
+
+**Settings deliberately live at the call site, not in a build flag.** A CLI flag would make the
+same source produce different results depending on how it was compiled — every other flag affects
+only *how* compilation happens, never what the program computes. A file-level directive was also
+rejected: a call's behaviour would depend on a line possibly hundreds of lines away.
+
+**OPEN, deferred:** `binary`/`octal`, an `allow-empty` for blank fields, and a `percent` reading
+`"50%"` as 0.5 — which would finally use the `%` kept free from `mod`.
 
 ### Bare means builtin — **DECIDED**
 
