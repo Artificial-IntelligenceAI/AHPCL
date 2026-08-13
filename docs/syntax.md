@@ -1107,6 +1107,32 @@ not. Rejected: bare (`area[…]`), which re-creates the "bare when possible, quo
 that always-quoted references were introduced to remove; and reference-style (`('area')[…]`),
 which costs four characters on every call and implies an indirection that does not exist.
 
+### Builtins so far — **DECIDED**
+
+| Builtin | Does | Hands back |
+|---|---|---|
+| `print[…]` | writes to output | nothing |
+| `read["path"]` | reads a file | `str` |
+| `parse[…]` | text to number, target type from context | a number |
+
+`parse` uses the same context-pins-the-type rule as numeric literals and division — polymorphic
+until pinned, error if nothing pins it. One builtin covers every numeric type:
+
+```
+var:str  'raw' = read["count.txt"].
+var:int  'n'   = parse[('raw')].
+var:deci 'x'   = parse[('raw')].
+```
+
+Keeping it a builtin rather than a maths operator is deliberate: `parse` can **fail**, and no maths
+operator can. A failure stops the program — see [diagnostics.md](diagnostics.md).
+
+Rejected: one builtin per type (`to-int`, `to-deci` — grows with every type, all doing one job) and
+a maths operator (`math { num ('raw') }`, which would make the one fallible thing inside
+`math { }`).
+
+**OPEN:** what counts as parseable text.
+
 ### Bare means builtin — **DECIDED**
 
 **A bare name is a builtin; a quoted name is user-defined.**

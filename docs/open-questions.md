@@ -34,9 +34,8 @@ decided.
 
 ## Gaps found by writing sample programs
 
-**31. Text-to-number conversion.** `read` gives back a `str`; nothing turns text into numbers, so
-file input is only half-usable. Format-aware reading (CSV straight to a typed array) is a **later**
-addition.
+**31. What counts as parseable text** for `parse`. The builtin itself is decided. Format-aware
+reading (CSV straight to a typed array) remains a **later** addition.
 
 **32. Runtime failure wording** — the greeting line, and whether `AHPCL-RUN-0001` is the right code
 category. The behaviour is decided: failures stop the program.
