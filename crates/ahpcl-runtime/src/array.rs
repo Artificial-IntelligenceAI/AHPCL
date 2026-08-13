@@ -848,6 +848,15 @@ pub(crate) fn unary(op: u32, c: &Cell, digits: u32) -> Cell {
     }
 }
 
+/// Apply a unary operator to every element, for `-('a'):all;` and friends.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_array_unary(op: u32, a: *const Array, digits: u32) -> *mut Array {
+    let a = &*a;
+    let items: Vec<Cell> = a.items.iter().map(|c| unary(op, c, digits)).collect();
+    let kind = result_kind(&items);
+    Array { items, shape: a.shape.clone(), kind }.hand_out()
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_num_unary(op: u32, a: *const Cell, digits: u32) -> *mut Cell {
     hand_out_cell(unary(op, &*a, digits))

@@ -390,6 +390,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             None,
         );
         self.module.add_function(
+            "ahpcl_array_unary",
+            ptr.fn_type(&[u32t.into(), p.into(), u32t.into()], false),
+            None,
+        );
+        self.module.add_function(
             "ahpcl_num_unary",
             ptr.fn_type(&[u32t.into(), p.into(), u32t.into()], false),
             None,
@@ -997,6 +1002,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             ExprKind::Math(inner) => self.value_repr(inner),
             ExprKind::Number(t) | ExprKind::Literal(t) if t.contains('.') => Native::Deci,
             ExprKind::Constant(_) => Native::Deci,
+            ExprKind::Unary { op, operand } if self.value_repr(operand).is_array()
+                && !is_bare_ref(operand)
+                && *op != UnOp::Not =>
+            {
+                self.value_repr(operand)
+            }
             ExprKind::Unary { op, operand } => match op {
                 // A square root is a decimal even from a whole number; rounding gives
                 // a whole number whatever went in; `not` is a bool.
@@ -1371,6 +1382,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     Constant::E => 1,
                     Constant::Tau => 2,
                 };
+                // Both the constant and the digit count are known now, so asking for
+                // more places than AHPCL knows is caught here rather than at run time.
+                const CONSTANT_DIGITS: u32 = 36;
+                if self.digits > CONSTANT_DIGITS {
+                    return Err(Unsupported::new(format!(
+                        "a constant to {} places, which is more than the {CONSTANT_DIGITS} AHPCL knows",
+                        self.digits
+                    )));
+                }
                 let which = self.context.i32_type().const_int(which, false);
                 // The declared precision decides how much of an irrational to compute;
                 // without one, the same 15 places everything else defaults to.
@@ -1472,6 +1492,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             UnOp::Floor | UnOp::Ceil => Native::Int,
             _ => held,
         };
+
+        // An array operand with a selector stays an array, so the operator applies to
+        // each element — the unary half of Rule A.
+        if held.is_array() && !is_bare_ref(operand) {
+            let array = self.expr(operand, held)?;
+            let tag = self.context.i32_type().const_int(tag, false);
+            let digits = self.context.i32_type().const_int(self.digits as u64, false);
+            return self
+                .call_runtime("ahpcl_array_unary", &[tag.into(), array.into(), digits.into()])
+                .ok_or_else(|| Unsupported::new("an elementwise unary operator"));
+        }
 
         // Integers keep their machine instructions where the result is still an integer.
         if natural == Native::Int && held == Native::Int && matches!(op, UnOp::Neg | UnOp::Abs) {

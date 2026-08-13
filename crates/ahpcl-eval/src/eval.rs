@@ -510,6 +510,20 @@ impl<'a> Interpreter<'a> {
             }
             ExprKind::Unary { op, operand } => {
                 let v = self.expr(operand, hint)?;
+                // The same Rule A split the binary operators follow: a *bare* array
+                // reference sums first, while `('a'):all;` stays an array and the
+                // operator applies to each element. Reducing unconditionally let a
+                // `vector` variable end up holding a single value.
+                if let (Value::Array(arr), false) = (&v, is_bare_ref(operand)) {
+                    if *op != UnOp::Not {
+                        let (items, shape) = (arr.items.clone(), arr.shape.clone());
+                        let mut out = Vec::with_capacity(items.len());
+                        for item in items {
+                            out.push(self.unary(*op, item, e.span, hint)?);
+                        }
+                        return Ok(Value::Array(Array { items: out, shape }));
+                    }
+                }
                 self.unary(*op, v, e.span, hint)
             }
             ExprKind::ArrayLit(items) => {

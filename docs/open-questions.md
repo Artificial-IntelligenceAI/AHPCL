@@ -102,6 +102,20 @@ state to represent and no silent 0 to explain. Rejected: the zero of the type (a
 default), and a real "unset" value (every type gains a state and every read gains a check).
 Moved to [types.md](types.md).
 
+**31. Should `parse` read a fraction?** `parse["2/6"]` into a `rat` is rejected — `parse`
+reads decimal text only, on both paths. `rat` is a first-class type with no literal form of
+its own, so `n/d` text is the obvious way to get one from input, but accepting it adds a
+second numeric syntax to `parse`. Found 2026-08-13; the backend was briefly accepting it
+while the interpreter refused, which is why this is written down rather than quietly kept.
+
+**32. Does `handback` end a loop body?** In a *function* both paths agree it exits
+immediately. In a loop body they disagree: the interpreter stops the iteration there, so
+statements after it never run, while native code runs them. Neither is obviously right —
+"each `handback` contributes one element" reads like it should *not* terminate, but then a
+`handback` in a condition loop needs the rest of the body to run or the loop never ends
+(the interpreter currently hangs on exactly that program). This one needs deciding before
+either implementation can be called wrong. Found by stress-testing, 2026-08-13.
+
 *(Numbering has gaps where items were resolved or removed. Kept stable so references hold.)*
 
 ---

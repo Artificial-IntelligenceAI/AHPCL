@@ -660,3 +660,30 @@ fn a_functions_return_type_is_the_context_its_handback_divides_in() {
         "1/3"
     );
 }
+
+#[test]
+fn assigning_a_bare_array_reference_to_a_scalar_sums_it() {
+    // `change:` skipped the reduction a declaration performs, so a whole array went
+    // into an `int` variable.
+    assert_eq!(
+        one(
+            "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+             var:int 's' [64 bit] = '0'.\n\
+             change:var:int 's' = math { ('a') }.\nprint[('s')]."
+        ),
+        "6"
+    );
+}
+
+#[test]
+fn a_unary_operator_on_an_all_selector_stays_elementwise() {
+    // Reducing unconditionally let a `vector` variable hold a single value, which the
+    // checker had already typed as an array.
+    assert_eq!(
+        one(
+            "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+             var:vector:int 'b' [3] = math { -('a'):all; }.\nprint[('b')]."
+        ),
+        "{-1, -2, -3}"
+    );
+}

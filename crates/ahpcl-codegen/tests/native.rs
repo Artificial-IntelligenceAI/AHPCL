@@ -290,12 +290,14 @@ fn rationals_are_exact_in_native_code() {
 
 #[test]
 fn rationals_reduce_natively() {
+    // Decimal text, since that is what `parse` accepts — see open question 31 on
+    // whether it should also read "2/6".
     assert_eq!(
         compile_and_run(
             "ratreduce",
-            "var:rat 'r' [64 bit] = parse[\"2/6\"].\nprint[('r')]."
+            "var:rat 'r' [64 bit] = parse[\"0.5\"].\nprint[('r')]."
         ),
-        "1/3"
+        "1/2"
     );
 }
 
@@ -589,4 +591,79 @@ fn reading_a_file_compiles() {
         path.display()
     );
     assert_eq!(compile_and_run("readfile", &src), "hello from a file");
+}
+
+// ── regressions from the third stress-test pass ─────────────────────────────
+
+#[test]
+fn a_loop_counter_reads_correctly_in_an_exact_context() {
+    // The counter was registered in `vars` but not `var_types`, so it was read as
+    // whatever the surrounding context wanted — an i64 slot loaded as a decimal.
+    assert_eq!(
+        compile_and_run(
+            "loopcounter",
+            "loop:var:int 'i' = math { 1 to 3 } {\n\
+                 var:deci 'x' = math { ('i') / 4 }.\n\
+                 print[('x')].\n\
+             }."
+        ),
+        "0.25\n0.5\n0.75"
+    );
+}
+
+#[test]
+fn a_declaration_inside_a_loop_does_not_leak_out_of_it() {
+    // The counted loop pushed a `vars` frame without a matching `var_types` frame, so
+    // an inner declaration overwrote the outer variable's recorded type.
+    assert_eq!(
+        compile_and_run(
+            "loopscope",
+            "var:int 'x' [32 bit] = '7'.\n\
+             loop:var:int 'i' = math { 1 to 1 } {\n\
+                 var:deci 'x' = '1.5'.\n\
+                 print[('x')].\n\
+             }.\n\
+             print[('x')]."
+        ),
+        "1.5\n7"
+    );
+}
+
+#[test]
+fn a_bare_array_reference_sums_even_on_its_own() {
+    // Rule A applied only inside binary operators, so a bare reference standing alone
+    // handed back the array pointer as an integer.
+    assert_eq!(
+        compile_and_run(
+            "barealone",
+            "var:vector:int 'a' [4] = {'1','2','3','4'}.\n\
+             var:int 's' [64 bit] = math { ('a') }.\n\
+             print[('s')]."
+        ),
+        "10"
+    );
+}
+
+#[test]
+fn a_selector_addresses_a_dimension_not_the_flat_buffer() {
+    // `('m'):2;` is the second row of a matrix, not its second element.
+    let src = "var:matrix:int 'm' [3,4] = {{'1','2','3','4'},{'5','6','7','8'},{'9','10','11','12'}}.\n\
+               var:vector:int 'row' [4] = ('m'):2;.\n\
+               var:int 'cell' [64 bit] = ('m'):2;:3;.\n\
+               print[('row')].\nprint[('cell')].";
+    assert_eq!(compile_and_run("matsel", src), "{5, 6, 7, 8}\n7");
+}
+
+#[test]
+fn an_elementwise_unary_keeps_the_array() {
+    // `:all;` keeps it an array for unary operators too, not only binary ones.
+    assert_eq!(
+        compile_and_run(
+            "unaryall",
+            "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+             var:vector:int 'b' [3] = math { -('a'):all; }.\n\
+             print[('b')]."
+        ),
+        "{-1, -2, -3}"
+    );
 }

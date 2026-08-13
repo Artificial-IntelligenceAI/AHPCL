@@ -434,10 +434,10 @@ unsafe fn parse_prepare(
         s = s.trim().to_string();
     }
     if flags & PARSE_UNICODE_DIGITS != 0 {
-        s = s
-            .chars()
-            .map(|c| c.to_digit(10).map(|d| char::from(b'0' + d as u8)).unwrap_or(c))
-            .collect();
+        // `char::to_digit` only recognises ASCII and a few others; Thai and
+        // Arabic-Indic digits need the general numeric value, which is what the
+        // interpreter uses.
+        s = s.chars().map(unicode_digit).collect();
     }
     if !group.is_null() {
         let g = (*group).as_str();
@@ -468,6 +468,40 @@ unsafe fn parse_prepare(
         }
     }
     Some(s)
+}
+
+/// Map any Unicode decimal digit onto its ASCII form, leaving everything else alone.
+///
+/// `char::to_digit` only understands ASCII, so the decimal blocks are listed. This table
+/// is kept identical to `unicode_digit_to_ascii` in the interpreter — a shorter list
+/// here would mean `parse["๔๒" unicode-digits]` worked interpreted and failed compiled.
+fn unicode_digit(c: char) -> char {
+    const BLOCKS: &[u32] = &[
+        0x0660, // Arabic-Indic
+        0x06F0, // Extended Arabic-Indic
+        0x0966, // Devanagari
+        0x09E6, // Bengali
+        0x0A66, // Gurmukhi
+        0x0AE6, // Gujarati
+        0x0B66, // Oriya
+        0x0BE6, // Tamil
+        0x0C66, // Telugu
+        0x0CE6, // Kannada
+        0x0D66, // Malayalam
+        0x0E50, // Thai
+        0x0ED0, // Lao
+        0x0F20, // Tibetan
+        0x1040, // Myanmar
+        0x17E0, // Khmer
+        0xFF10, // Fullwidth
+    ];
+    let code = c as u32;
+    for &base in BLOCKS {
+        if code >= base && code < base + 10 {
+            return char::from_digit(code - base, 10).unwrap_or(c);
+        }
+    }
+    c
 }
 
 /// Split `12.34` into mantissa 1234 and scale 2.
@@ -524,12 +558,11 @@ pub unsafe extern "C" fn ahpcl_parse_rat(
     decimal: *const AhpclStr,
 ) {
     let prepared = parse_prepare(text, flags, group, decimal);
-    let parsed = prepared.as_deref().and_then(|s| match s.split_once('/') {
-        Some((n, d)) => Some(AhpclRational::reduced(n.trim().parse().ok()?, d.trim().parse().ok()?)),
-        None => {
-            let (m, scale) = split_decimal(s)?;
-            Some(AhpclRational::reduced(m, 10i128.checked_pow(scale)?))
-        }
+    // Decimal text only, matching the interpreter. Whether `parse` should also accept
+    // "2/6" is a language question, not something the backend gets to decide on its own.
+    let parsed = prepared.as_deref().and_then(|s| {
+        let (m, scale) = split_decimal(s)?;
+        Some(AhpclRational::reduced(m, 10i128.checked_pow(scale)?))
     });
     match parsed {
         Some(v) => *out = v,
@@ -681,7 +714,18 @@ pub unsafe extern "C" fn ahpcl_constant(out: *mut AhpclDecimal, which: u32, digi
     };
     // The table is written with 36 decimal places.
     let full = AhpclDecimal { mantissa: text.replace('.', "").parse().unwrap(), scale: 36, failed: 0 };
-    if digits >= full.scale {
+    if digits > full.scale {
+        // A silent approximation would be worse than refusing: types.md is explicit
+        // that asking for more places than are known is an error.
+        fail_with(
+            "AHPCL-PREC-0004",
+            &format!(
+                "AHPCL knows this constant to {} decimal places; {digits} were asked for",
+                full.scale
+            ),
+        );
+    }
+    if digits == full.scale {
         *out = full;
         return;
     }
