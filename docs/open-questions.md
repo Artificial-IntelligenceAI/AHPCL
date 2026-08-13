@@ -51,9 +51,6 @@ operations that do not exist. `≤ ≥ ≠ ÷` alias things that do exist. `∧ 
 **3c. The maths operator roster** — the shape is decided (all operators, words plus symbols).
 Still open: the full list, and which of `log`/`ln` means which base.
 
-**3d. Associativity** — `math { 2 xx 3 xx 2 }` is `2^(3^2)` in mathematics (right-associative),
-unlike `-` and `/` which group left to right. Precedence itself is decided.
-
 **4. LaTeX notation — which reading?** `\(2^{3}\)` could mean grouping braces on `^` (cheap,
 easy) or genuinely embedded LaTeX math mode (`\frac`, `\sum`, `\int` — a signature feature, and
 a second parser). Note `\` is already the escape character.

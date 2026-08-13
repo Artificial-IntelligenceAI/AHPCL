@@ -345,8 +345,23 @@ In AHPCL's favour, operands are already delimited — `('x')` is unmistakably on
 `math { sqrt ('x') + 1 }` reads as `(√x) + 1` at a glance. That recovers much of the clarity the
 radical's horizontal bar provides in typeset mathematics and which linear text otherwise loses.
 
-**OPEN:** associativity — `math { 2 xx 3 xx 2 }` is `2^(3^2)` in mathematics (right-associative),
-unlike `-` and `/` which group left to right.
+### Associativity — **DECIDED: follow mathematics**
+
+Powers group **right to left**; everything else groups **left to right**.
+
+```
+math { 10 - 3 - 2 }     →  (10 - 3) - 2   =  5
+math { 100 / 5 / 2 }    →  (100 / 5) / 2  =  10
+math { 2 xx 3 xx 2 }    →  2 xx (3 xx 2)  =  512
+```
+
+That last one is 512, not 64 — `2^3^2` is `2^(3^2)` in mathematics. Powers are the only operator
+that behaves this way, which people forget, but the alternative was worse: grouping powers left to
+right would make AHPCL quietly disagree with a calculator, in a language whose premise is getting
+the maths right.
+
+Rejected: uniform left-to-right (one rule, wrong answers) and requiring brackets on chained powers
+(an error for something mathematics considers well-defined).
 
 ### Boolean operators — **DECIDED**
 
