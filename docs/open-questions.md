@@ -42,9 +42,16 @@ decided (`=` inside `math { }`).
 
 ## Syntax
 
-**3. Which Unicode symbols are aliases.** "Probably every, idk". The safe list
-(`≤ ≥ ≠ ÷ √ π ∞ ≈ ∧ ∨ ¬ ∈ →`) is still unconfirmed; `· × ⊙ ⊗` are now reserved operations
-rather than aliases, and `∘` is unassigned.
+**3. Which Unicode symbols are aliases.** Mostly **blocked**: half the old "safe list" needs
+operations that do not exist. `≤ ≥ ≠ ÷` alias things that do exist. `∧ ∨ ¬` need boolean operators;
+`∈` needs sets; `π` and `∞` need constants; `√` needs square root; `≈` needs a tolerance rule.
+`· × ⊙ ⊗` are reserved operations, and `∘` is unassigned.
+
+**3b. Are there constants at all?** `π`, `∞`, `e` — nothing in the language provides a named
+constant, and a calculations language plainly wants them.
+
+**3c. Is there a square root**, and are there other maths builtins (`sin`, `log`, `abs`, `round`)?
+None exist. Relates to #6b, whether value-returning builtins are quoted.
 
 **4. LaTeX notation — which reading?** `\(2^{3}\)` could mean grouping braces on `^` (cheap,
 easy) or genuinely embedded LaTeX math mode (`\frac`, `\sum`, `\int` — a signature feature, and

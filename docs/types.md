@@ -389,6 +389,30 @@ narrowing chain the same way `var:num` does (**INFERRED**: the order was assumed
 
 **OPEN:** whether `tensor` is legal at rank 1 or 2, or strictly rank 3 and above.
 
+## Booleans — **DECIDED**
+
+`bool` holds a truth value. Comparisons produce one, and conditions require one:
+
+```
+var:bool 'is_big' = math { ('x') > 5 }.
+if ('is_big') { … }.
+```
+
+Added 2026-08-12, when it turned out comparisons had no type at all — `math { ('x') > 5 }` could
+not be stored, passed, or combined, and `if` had nothing to require.
+
+It also gives `∧ ∨ ¬` (and / or / not) something to operate on.
+
+Rejected: comparisons legal only inside conditions (no stored results, no `and`/`or`, and `if`
+becomes the only place a comparison may appear); and numbers-as-booleans, where
+`if math { ('x') }` compiles when `('x') > 0` was meant — precisely the mistake the language
+exists to catch.
+
+`bool` is outside the numeric hierarchy — it is not a `num`.
+
+**OPEN:** what the literals are called (`true`/`false`?), and whether and/or/not are words,
+symbols, or both.
+
 ## Text — **DECIDED**
 
 `str` holds a single piece of text; `nna` ("non-numerical-array") holds many.
