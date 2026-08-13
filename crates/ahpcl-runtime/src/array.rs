@@ -315,6 +315,144 @@ pub unsafe extern "C" fn ahpcl_array_range(
     Array::vector(items, a.kind).hand_out()
 }
 
+/// One selector, as generated code describes it to the runtime.
+///
+/// A run of these addresses one dimension each, in order — the same rule the
+/// interpreter follows. Selecting on the flat item buffer instead is correct only for
+/// vectors, and silently wrong for everything else.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AhpclSelector {
+    /// 0 = `:all;`, 1 = an index list, 2 = a range.
+    pub kind: u32,
+    pub _pad: u32,
+    pub from: i64,
+    pub to: i64,
+    pub by: i64,
+    pub indices: *const i64,
+    pub count: u64,
+}
+
+/// The 0-based positions a selector picks along a dimension of `extent`, and whether
+/// the dimension collapses (a single index gives a plain value, not a 1-long slice).
+unsafe fn positions(sel: &AhpclSelector, extent: u64, dim: usize) -> (Vec<usize>, bool) {
+    let check = |i: i64| -> usize {
+        if i < 1 || i as u64 > extent {
+            fail_with(
+                "AHPCL-RUN-0003",
+                &format!(
+                    "index {i} is out of range for dimension {} of length {extent}",
+                    dim + 1
+                ),
+            );
+        }
+        i as usize - 1
+    };
+    match sel.kind {
+        1 => {
+            let list = std::slice::from_raw_parts(sel.indices, sel.count as usize);
+            (list.iter().map(|&i| check(i)).collect(), sel.count == 1)
+        }
+        2 => {
+            if sel.by == 0 {
+                fail_with("AHPCL-RUN-0003", "a selector step of 0 would never advance");
+            }
+            let mut out = Vec::new();
+            let mut i = sel.from;
+            while (sel.by > 0 && i <= sel.to) || (sel.by < 0 && i >= sel.to) {
+                out.push(check(i));
+                i += sel.by;
+            }
+            (out, false)
+        }
+        _ => ((0..extent as usize).collect(), false),
+    }
+}
+
+/// Apply a run of selectors, one per dimension.
+///
+/// When every selected dimension collapses the result is a single value; it is handed
+/// back as an array with an empty shape, which `ahpcl_array_is_scalar` reports.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_array_select_run(
+    a: *const Array,
+    sels: *const AhpclSelector,
+    n: u64,
+) -> *mut Array {
+    let a = &*a;
+    let n = n as usize;
+    if n == 0 {
+        return a.clone().hand_out();
+    }
+    if n > a.shape.len() {
+        fail_with(
+            "AHPCL-RUN-0003",
+            &format!(
+                "{n} selectors were given, but this array has {} dimension{}",
+                a.shape.len(),
+                if a.shape.len() == 1 { "" } else { "s" }
+            ),
+        );
+    }
+
+    let run = std::slice::from_raw_parts(sels, n);
+    let mut picks: Vec<Vec<usize>> = Vec::new();
+    let mut collapse: Vec<bool> = Vec::new();
+    for (dim, sel) in run.iter().enumerate() {
+        let (chosen, single) = positions(sel, a.shape[dim], dim);
+        picks.push(chosen);
+        collapse.push(single);
+    }
+    // Dimensions with no selector are kept whole.
+    for dim in n..a.shape.len() {
+        picks.push((0..a.shape[dim] as usize).collect());
+        collapse.push(false);
+    }
+
+    let strides: Vec<usize> = (0..a.shape.len())
+        .map(|d| a.shape[d + 1..].iter().product::<u64>().max(1) as usize)
+        .collect();
+
+    let mut items = Vec::new();
+    let mut counter = vec![0usize; picks.len()];
+    if picks.iter().any(Vec::is_empty) {
+        return Array { items, shape: vec![0], kind: a.kind }.hand_out();
+    }
+    loop {
+        let offset: usize = counter
+            .iter()
+            .enumerate()
+            .map(|(d, &c)| picks[d][c] * strides[d])
+            .sum();
+        items.push(a.items[offset].clone());
+
+        let mut d = picks.len();
+        loop {
+            if d == 0 {
+                let shape: Vec<u64> = picks
+                    .iter()
+                    .zip(&collapse)
+                    .filter(|(_, c)| !**c)
+                    .map(|(p, _)| p.len() as u64)
+                    .collect();
+                return Array { items, shape, kind: a.kind }.hand_out();
+            }
+            d -= 1;
+            counter[d] += 1;
+            if counter[d] < picks[d].len() {
+                break;
+            }
+            counter[d] = 0;
+        }
+    }
+}
+
+/// Whether a selection collapsed to a single value rather than an array.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_array_is_scalar(a: *const Array) -> i32 {
+    (*a).shape.is_empty() as i32
+}
+
 // ── arithmetic ──────────────────────────────────────────────────────────────
 
 pub const OP_ADD: u32 = 0;
@@ -817,6 +955,41 @@ mod tests {
         unsafe {
             let a = ints(&[2, 4, 4, 4, 5, 9]);
             assert_eq!(*ahpcl_array_sum(&a), Cell::Int(28));
+        }
+    }
+
+    fn sel_index(i: i64) -> AhpclSelector {
+        AhpclSelector {
+            kind: 1,
+            _pad: 0,
+            from: 0,
+            to: 0,
+            by: 0,
+            indices: Box::leak(Box::new([i])).as_ptr(),
+            count: 1,
+        }
+    }
+
+    #[test]
+    fn a_selector_addresses_a_dimension_not_the_flat_buffer() {
+        // `('m'):2;` on a 3x4 matrix is the second *row*, not the second element.
+        unsafe {
+            let m = Array {
+                items: ints(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).items,
+                shape: vec![3, 4],
+                kind: KIND_INT,
+            };
+            let row = &*ahpcl_array_select_run(&m, [sel_index(2)].as_ptr(), 1);
+            assert_eq!(row.shape, vec![4]);
+            assert_eq!(
+                row.items,
+                vec![Cell::Int(5), Cell::Int(6), Cell::Int(7), Cell::Int(8)]
+            );
+
+            // Two selectors address two dimensions, and both collapse to one value.
+            let one = &*ahpcl_array_select_run(&m, [sel_index(2), sel_index(3)].as_ptr(), 2);
+            assert!(one.shape.is_empty(), "collapsed to a scalar");
+            assert_eq!(one.items, vec![Cell::Int(7)]);
         }
     }
 

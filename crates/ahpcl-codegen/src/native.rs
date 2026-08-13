@@ -167,7 +167,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Native::Deci => self.deci_type().into(),
             Native::Rat => self.rat_type().into(),
             Native::Str => self.str_type().into(),
-            Native::Array(_) | Native::Num => self.ptr().into(),
+            Native::Array(..) | Native::Num => self.ptr().into(),
             _ => self.i64().into(),
         }
     }
@@ -198,6 +198,67 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let _ = instruction.set_alignment(16);
         }
         slot
+    }
+
+    /// Integer arithmetic that stops rather than wrapping.
+    ///
+    /// LLVM's overflow intrinsics hand back `{ result, overflowed }`; the flag is
+    /// branched on so an overflow reaches the Error Handler, matching the interpreter
+    /// and the documented rule that overflow is an error.
+    fn checked_int(
+        &mut self,
+        a: inkwell::values::IntValue<'ctx>,
+        b: inkwell::values::IntValue<'ctx>,
+        intrinsic: &str,
+        what: &str,
+    ) -> Result<inkwell::values::IntValue<'ctx>, Unsupported> {
+        let name = format!("llvm.{intrinsic}.with.overflow.i64");
+        let function = match self.module.get_function(&name) {
+            Some(f) => f,
+            None => {
+                let ty = self
+                    .context
+                    .struct_type(&[self.i64().into(), self.bool_type().into()], false)
+                    .fn_type(&[self.i64().into(), self.i64().into()], false);
+                self.module.add_function(&name, ty, None)
+            }
+        };
+        let call = self
+            .builder
+            .build_call(function, &[a.into(), b.into()], "chk")
+            .unwrap();
+        let pair = match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_struct_value(),
+            _ => return Err(Unsupported::new("a checked integer operation")),
+        };
+        let value = self
+            .builder
+            .build_extract_value(pair, 0, "chk.v")
+            .unwrap()
+            .into_int_value();
+        let overflowed = self
+            .builder
+            .build_extract_value(pair, 1, "chk.o")
+            .unwrap()
+            .into_int_value();
+
+        let function = self.current.expect("inside a function");
+        let bad = self.context.append_basic_block(function, "ovf");
+        let ok = self.context.append_basic_block(function, "ovf.ok");
+        self.builder.build_conditional_branch(overflowed, bad, ok).unwrap();
+        self.builder.position_at_end(bad);
+        self.fail("AHPCL-PREC-0004", &format!("this integer {what} overflowed"));
+        self.builder.position_at_end(ok);
+        Ok(value)
+    }
+
+    /// Stop the program through the Error Handler, and mark the block unreachable so
+    /// LLVM knows nothing follows.
+    fn fail(&mut self, code: &str, message: &str) {
+        let code = self.global_string(code);
+        let message = self.global_string(message);
+        self.call_runtime("ahpcl_fail", &[code.into(), message.into()]);
+        self.builder.build_unreachable().unwrap();
     }
 
     fn ptr(&self) -> inkwell::types::PointerType<'ctx> {
@@ -387,10 +448,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.module
             .add_function("ahpcl_print_array", void.fn_type(&[p.into()], false), None);
         self.module.add_function(
-            "ahpcl_array_select",
+            "ahpcl_array_select_run",
             ptr.fn_type(&[p.into(), p.into(), i64t.into()], false),
             None,
         );
+        self.module
+            .add_function("ahpcl_array_is_scalar", i32t.fn_type(&[p.into()], false), None);
         self.module.add_function(
             "ahpcl_array_range",
             ptr.fn_type(&[p.into(), i64t.into(), i64t.into(), i64t.into()], false),
@@ -554,7 +617,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     Native::Deci => self.deci_type().into(),
                     Native::Rat => self.rat_type().into(),
                     Native::Str => self.str_type().into(),
-                    Native::Array(_) | Native::Num => self.ptr().into(),
+                    Native::Array(..) | Native::Num => self.ptr().into(),
                     Native::None => return Err(Unsupported::new("a parameter of type none")),
                 });
             }
@@ -564,7 +627,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Native::Deci => self.deci_type().fn_type(&params, false),
                 Native::Rat => self.rat_type().fn_type(&params, false),
                 Native::Str => self.str_type().fn_type(&params, false),
-                Native::Array(_) | Native::Num => self.ptr().fn_type(&params, false),
+                Native::Array(..) | Native::Num => self.ptr().fn_type(&params, false),
                 Native::None => self.context.void_type().fn_type(&params, false),
             };
             let value = self.module.add_function(&mangle(&f.name), fn_type, None);
@@ -621,7 +684,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let empty = self.str_value("");
                     self.builder.build_return(Some(&empty)).unwrap();
                 }
-                Native::Array(_) | Native::Num => {
+                Native::Array(..) | Native::Num => {
                     let null = self.ptr().const_null();
                     self.builder.build_return(Some(&null)).unwrap();
                 }
@@ -946,8 +1009,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             },
             ExprKind::Str(_) => Native::Str,
             ExprKind::Builtin { name, .. } if name == "read" => Native::Str,
-            ExprKind::ArrayLit(_) => Native::Array(0),
-            ExprKind::Loop(_) => Native::Array(5),
+            ExprKind::ArrayLit(items) => Native::Array(0, literal_shape(items).len() as u32),
+            ExprKind::Loop(_) => Native::Array(5, 1),
             ExprKind::Binary { op, lhs, rhs } => {
                 let (l, r) = (self.value_repr(lhs), self.value_repr(rhs));
                 // A dot product of two vectors collapses to a single value.
@@ -1061,12 +1124,36 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     return Err(Unsupported::new("a counted loop without a range"));
                 };
 
-                let start = self.expr(from, Native::Int)?.into_int_value();
-                let end = self.expr(to, Native::Int)?.into_int_value();
+                // A bound must be a whole number. Anything else — an array, say — is
+                // for the interpreter to diagnose; calling `into_int_value` on it panics
+                // the compiler instead.
+                let whole = |v: BasicValueEnum<'ctx>| {
+                    v.is_int_value()
+                        .then(|| v.into_int_value())
+                        .ok_or_else(|| Unsupported::new("a loop bound that is not a whole number"))
+                };
+                let start = whole(self.expr(from, Native::Int)?)?;
+                let end = whole(self.expr(to, Native::Int)?)?;
                 let step = match by {
-                    Some(b) => self.expr(b, Native::Int)?.into_int_value(),
+                    Some(b) => whole(self.expr(b, Native::Int)?)?,
                     None => self.i64().const_int(1, true),
                 };
+
+                // A step of 0 never advances, so the loop would never finish. The
+                // interpreter refuses it; silently running zero times would be worse
+                // than either.
+                let zero_step = self
+                    .builder
+                    .build_int_compare(IntPredicate::EQ, step, self.i64().const_zero(), "step0")
+                    .unwrap();
+                let bad_bb = self.context.append_basic_block(function, "loop.badstep");
+                let ok_bb = self.context.append_basic_block(function, "loop.step.ok");
+                self.builder
+                    .build_conditional_branch(zero_step, bad_bb, ok_bb)
+                    .unwrap();
+                self.builder.position_at_end(bad_bb);
+                self.fail("AHPCL-RUN-0001", "a loop step of 0 would never finish");
+                self.builder.position_at_end(ok_bb);
 
                 let slot = self.alloca(var, self.i64().into());
                 self.builder.build_store(slot, start).unwrap();
@@ -1101,10 +1188,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .unwrap();
 
                 self.builder.position_at_end(body_bb);
+                // Both frames, always together. Pushing `vars` alone left the counter
+                // with no recorded representation — so it was read as whatever the
+                // context wanted — and let declarations inside the body leak into the
+                // enclosing scope.
                 self.vars.push(HashMap::new());
+                self.var_types.push(HashMap::new());
                 self.vars.last_mut().unwrap().insert(var.clone(), slot);
-                let terminated = self.block(&l.body)?;
+                self.var_types.last_mut().unwrap().insert(var.clone(), Native::Int);
+                let terminated = self.block(&l.body);
                 self.vars.pop();
+                self.var_types.pop();
+                let terminated = terminated?;
                 if !terminated {
                     let cur = self
                         .builder
@@ -1190,7 +1285,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .build_load(self.repr_type(held), slot, name)
                     .unwrap();
                 if held.is_array() {
-                    return self.array_selectors(loaded, selectors, held.element(), want);
+                    let out =
+                        self.array_selectors(loaded, selectors, held.element(), want, held.rank())?;
+                    // Rule A again: a *bare* reference reduces to the sum of its
+                    // elements wherever a single value is wanted, not only inside a
+                    // binary operator. `:all;` keeps it an array, so it is left alone.
+                    if selectors.is_empty() && !want.is_array() && want != Native::None {
+                        let total = self
+                            .call_runtime("ahpcl_array_sum", &[out.into()])
+                            .ok_or_else(|| Unsupported::new("summing an array"))?;
+                        return self.convert(total, Native::Num, want);
+                    }
+                    return Ok(out);
                 }
                 if !selectors.is_empty() {
                     return Err(Unsupported::new("selectors on a value that is not an array"));
@@ -1674,74 +1780,155 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(array)
     }
 
-    /// A selector chain applied to an array: `:3;`, `:all;`, `:1 to 5 by 2;`, and so on.
+    /// A selector chain applied to an array.
+    ///
+    /// Selectors group into *runs*: `:length;` and `:shape;` answer a question about the
+    /// whole array and end the run, while everything else addresses one dimension of it,
+    /// in order. Applying them to the flat element buffer instead is right for vectors
+    /// and silently wrong for matrices and tensors.
     fn array_selectors(
         &mut self,
         mut current: BasicValueEnum<'ctx>,
         selectors: &[Selector],
         elem: Native,
         want: Native,
+        rank: u32,
     ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
-        for (i, sel) in selectors.iter().enumerate() {
-            let last = i + 1 == selectors.len();
+        let mut run: Vec<&Selector> = Vec::new();
+        let mut rank = rank;
+
+        for sel in selectors {
             match sel {
-                Selector::All => {}
                 Selector::Length => {
+                    current = self.apply_run(current, &run)?;
+                    run.clear();
                     let n = self
                         .call_runtime("ahpcl_array_len", &[current.into()])
                         .ok_or_else(|| Unsupported::new("':length;'"))?;
-                    // A count is a machine int, but the surrounding expression may want
-                    // it as an exact value.
                     return self.convert(n, Native::Int, want);
                 }
                 Selector::Shape => {
+                    current = self.apply_run(current, &run)?;
+                    run.clear();
                     current = self
                         .call_runtime("ahpcl_array_shape", &[current.into()])
                         .ok_or_else(|| Unsupported::new("':shape;'"))?;
+                    rank = 1;
                 }
-                Selector::Indices(ix) if ix.len() == 1 && last && !want.is_array() => {
-                    // A single index used as a value reads one element out.
-                    let index = self.expr(&ix[0], Native::Int)?;
-                    let v = self.array_load(current, index, elem)?;
-                    return self.convert(v, elem, want);
-                }
+                other => run.push(other),
+            }
+        }
+
+        // Every dimension addressed by a single index collapses; when that accounts for
+        // the whole rank, what is left is one value rather than an array.
+        let singles = run
+            .iter()
+            .filter(|s| matches!(s, Selector::Indices(ix) if ix.len() == 1))
+            .count();
+        let collapses = !run.is_empty() && singles == run.len() && singles as u32 == rank;
+
+        let out = self.apply_run(current, &run)?;
+        if collapses && !want.is_array() {
+            let one = self.i64().const_int(1, false);
+            let v = self.array_load(out, one.into(), elem)?;
+            return self.convert(v, elem, want);
+        }
+        Ok(out)
+    }
+
+    /// One run of dimension selectors, described to the runtime as a small table.
+    fn apply_run(
+        &mut self,
+        current: BasicValueEnum<'ctx>,
+        run: &[&Selector],
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        if run.is_empty() {
+            return Ok(current);
+        }
+        let i64t = self.i64();
+        let desc = self.selector_type();
+        let table = self.alloca_array("sels", desc.into(), run.len());
+
+        for (n, sel) in run.iter().enumerate() {
+            let slot = unsafe {
+                self.builder
+                    .build_gep(desc, table, &[i64t.const_int(n as u64, false)], "sel")
+                    .unwrap()
+            };
+            let (kind, from, to, by, indices, count) = match sel {
+                Selector::All => (0u64, None, None, None, None, 0u64),
                 Selector::Indices(ix) => {
-                    let i64t = self.i64();
                     let buffer = self.alloca_array("picks", i64t.into(), ix.len());
-                    for (n, e) in ix.iter().enumerate() {
+                    for (k, e) in ix.iter().enumerate() {
                         let v = self.expr(e, Native::Int)?;
-                        let slot = unsafe {
+                        let at = unsafe {
                             self.builder
-                                .build_gep(i64t, buffer, &[i64t.const_int(n as u64, false)], "pick")
+                                .build_gep(i64t, buffer, &[i64t.const_int(k as u64, false)], "pick")
                                 .unwrap()
                         };
-                        self.builder.build_store(slot, v).unwrap();
+                        self.builder.build_store(at, v).unwrap();
                     }
-                    let count = i64t.const_int(ix.len() as u64, false);
-                    current = self
-                        .call_runtime(
-                            "ahpcl_array_select",
-                            &[current.into(), buffer.into(), count.into()],
-                        )
-                        .ok_or_else(|| Unsupported::new("an index selector"))?;
+                    (1, None, None, None, Some(buffer), ix.len() as u64)
                 }
                 Selector::Range { from, to, by } => {
                     let f = self.expr(from, Native::Int)?;
                     let t = self.expr(to, Native::Int)?;
-                    let step = match by {
+                    let b = match by {
                         Some(e) => self.expr(e, Native::Int)?,
-                        None => self.i64().const_int(1, false).into(),
+                        None => i64t.const_int(1, true).into(),
                     };
-                    current = self
-                        .call_runtime(
-                            "ahpcl_array_range",
-                            &[current.into(), f.into(), t.into(), step.into()],
-                        )
-                        .ok_or_else(|| Unsupported::new("a range selector"))?;
+                    (2, Some(f), Some(t), Some(b), None, 0)
                 }
-            }
+                // Flushed by the caller, never reaching a run.
+                Selector::Length | Selector::Shape => (0, None, None, None, None, 0),
+            };
+
+            let store = |cg: &Self, field: u32, v: BasicValueEnum<'ctx>| {
+                let at = cg
+                    .builder
+                    .build_struct_gep(desc, slot, field, "sel.f")
+                    .unwrap();
+                cg.builder.build_store(at, v).unwrap();
+            };
+            store(self, 0, self.context.i32_type().const_int(kind, false).into());
+            store(self, 1, self.context.i32_type().const_zero().into());
+            store(self, 2, from.unwrap_or_else(|| i64t.const_zero().into()));
+            store(self, 3, to.unwrap_or_else(|| i64t.const_zero().into()));
+            store(self, 4, by.unwrap_or_else(|| i64t.const_zero().into()));
+            store(
+                self,
+                5,
+                indices
+                    .map(|p| p.into())
+                    .unwrap_or_else(|| self.ptr().const_null().into()),
+            );
+            store(self, 6, i64t.const_int(count, false).into());
         }
-        Ok(current)
+
+        let n = i64t.const_int(run.len() as u64, false);
+        self.call_runtime(
+            "ahpcl_array_select_run",
+            &[current.into(), table.into(), n.into()],
+        )
+        .ok_or_else(|| Unsupported::new("a selector"))
+    }
+
+    /// The layout of `AhpclSelector` in the runtime.
+    fn selector_type(&self) -> inkwell::types::StructType<'ctx> {
+        let i32t = self.context.i32_type();
+        let i64t = self.i64();
+        self.context.struct_type(
+            &[
+                i32t.into(),
+                i32t.into(),
+                i64t.into(),
+                i64t.into(),
+                i64t.into(),
+                self.ptr().into(),
+                i64t.into(),
+            ],
+            false,
+        )
     }
 
     /// Arithmetic where at least one side is a bare array reference, which Rule A
@@ -1766,6 +1953,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         reduce: bool,
     ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
         if reduce {
+            // Ask for the array itself, so the bare-reference reduction in `expr` does
+            // not also fire and sum it twice.
             let array = self.expr(e, self.value_repr(e))?;
             return self
                 .call_runtime("ahpcl_array_sum", &[array.into()])
@@ -2001,9 +2190,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
 
         let v = match op {
-            Add => self.builder.build_int_add(a, b, "add").unwrap(),
-            Sub => self.builder.build_int_sub(a, b, "sub").unwrap(),
-            Mul => self.builder.build_int_mul(a, b, "mul").unwrap(),
+            // Overflow is an error in AHPCL, so these are checked. Plain `add`/`sub`/
+            // `mul` wrap silently, which turns an overflow into a wrong answer.
+            Add => self.checked_int(a, b, "sadd", "addition")?,
+            Sub => self.checked_int(a, b, "ssub", "subtraction")?,
+            Mul => self.checked_int(a, b, "smul", "multiplication")?,
             IntDiv | Mod => {
                 let name = if op == IntDiv { "ahpcl_int_div" } else { "ahpcl_int_mod" };
                 return self
@@ -2217,15 +2408,24 @@ enum Native {
     /// `num`, the top of the numeric hierarchy: a tagged value holding whichever
     /// exact kind flowed into it, as an opaque pointer to a runtime object.
     Num,
-    /// An array, as an opaque pointer to a runtime-managed object. The tag says which
-    /// element type it holds, matching the `KIND_*` constants in the runtime.
-    Array(u32),
+    /// An array, as an opaque pointer to a runtime-managed object. The first tag says
+    /// which element type it holds, matching the `KIND_*` constants in the runtime; the
+    /// second is its rank, which decides whether a run of selectors collapses to a
+    /// single value.
+    Array(u32, u32),
     None,
 }
 
 impl Native {
     fn is_array(self) -> bool {
-        matches!(self, Native::Array(_))
+        matches!(self, Native::Array(..))
+    }
+
+    fn rank(self) -> u32 {
+        match self {
+            Native::Array(_, r) => r,
+            _ => 0,
+        }
     }
 
     /// The runtime's element-kind tag for a scalar representation.
@@ -2243,11 +2443,11 @@ impl Native {
     /// The scalar representation an array's elements are read as.
     fn element(self) -> Native {
         match self {
-            Native::Array(1) => Native::Bool,
-            Native::Array(2) => Native::Deci,
-            Native::Array(3) => Native::Rat,
-            Native::Array(4) => Native::Str,
-            Native::Array(5) => Native::Num,
+            Native::Array(1, _) => Native::Bool,
+            Native::Array(2, _) => Native::Deci,
+            Native::Array(3, _) => Native::Rat,
+            Native::Array(4, _) => Native::Str,
+            Native::Array(5, _) => Native::Num,
             _ => Native::Int,
         }
     }
@@ -2270,7 +2470,14 @@ enum Handback<'ctx> {
 fn native_base(ty: &TypeRef) -> Result<Native, Unsupported> {
     if ty.rank.is_some() {
         let scalar = TypeRef { rank: None, ..ty.clone() };
-        return Ok(Native::Array(native_base(&scalar)?.kind_tag()));
+        // The written shape is the most reliable rank; the rank name backs it up.
+        let rank = ty
+            .shape
+            .as_ref()
+            .map(|s| s.len())
+            .or_else(|| ty.rank.and_then(|r| r.dimensions()))
+            .unwrap_or(1) as u32;
+        return Ok(Native::Array(native_base(&scalar)?.kind_tag(), rank));
     }
     match ty.base.as_str() {
         "int" => Ok(Native::Int),

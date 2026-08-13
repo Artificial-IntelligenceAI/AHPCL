@@ -261,6 +261,16 @@ impl<'a> Interpreter<'a> {
                 for target in &c.targets {
                     let val = self.expr(&target.value, hint)?;
                     if target.selectors.is_empty() {
+                        // The same reduction a declaration performs: assigning a bare
+                        // array reference to a scalar sums it. Without this, `change:`
+                        // quietly put a whole array into an `int`.
+                        let scalar_target = c.ty.rank.is_none() && c.ty.base != "nna";
+                        let val = if scalar_target {
+                            let span = target.value.span;
+                            try_reduce_array(val).ok_or_else(|| self.sum_overflowed(span))?
+                        } else {
+                            val
+                        };
                         self.check_refinement(&c.ty, &target.name, &val, target.name_span)?;
                         self.assign(&target.name, val);
                     } else {

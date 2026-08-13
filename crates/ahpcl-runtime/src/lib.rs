@@ -47,12 +47,9 @@ pub(crate) const DEFAULT_DIVISION_DIGITS: u32 = 15;
 /// Apply one of the four arithmetic operations to two decimals.
 pub(crate) fn deci_apply(op: u32, a: AhpclDecimal, b: AhpclDecimal) -> AhpclDecimal {
     let out = match op {
-        array::OP_ADD => align(a, b).and_then(|(x, y, s)| Some(AhpclDecimal::ok(x.checked_add(y)?, s))),
-        array::OP_SUB => align(a, b).and_then(|(x, y, s)| Some(AhpclDecimal::ok(x.checked_sub(y)?, s))),
-        array::OP_MUL => a
-            .mantissa
-            .checked_mul(b.mantissa)
-            .map(|m| AhpclDecimal::ok(m, a.scale + b.scale)),
+        array::OP_ADD => Some(raw_add(a, b)),
+        array::OP_SUB => Some(raw_sub(a, b)),
+        array::OP_MUL => Some(raw_mul(a, b)),
         array::OP_POW => {
             let e = deci_whole(b);
             match e {
@@ -253,29 +250,41 @@ fn align(a: AhpclDecimal, b: AhpclDecimal) -> Option<(i128, i128, u32)> {
 
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_deci_add(out: *mut AhpclDecimal, a: *const AhpclDecimal, b: *const AhpclDecimal) {
-    let (a, b) = (*a, *b);
-    *out = match align(a, b).and_then(|(x, y, s)| Some((x.checked_add(y)?, s))) {
+    *out = checked_deci(raw_add(*a, *b));
+}
+
+/// The arithmetic itself, which reports overflow through the `failed` flag. The
+/// exported entry points wrap these and stop the program instead, since generated code
+/// has no way to read the flag.
+fn raw_add(a: AhpclDecimal, b: AhpclDecimal) -> AhpclDecimal {
+    match align(a, b).and_then(|(x, y, s)| Some((x.checked_add(y)?, s))) {
         Some((m, s)) => AhpclDecimal::ok(m, s),
         None => AhpclDecimal::fail(),
-    };
+    }
+}
+
+fn raw_sub(a: AhpclDecimal, b: AhpclDecimal) -> AhpclDecimal {
+    match align(a, b).and_then(|(x, y, s)| Some((x.checked_sub(y)?, s))) {
+        Some((m, s)) => AhpclDecimal::ok(m, s),
+        None => AhpclDecimal::fail(),
+    }
+}
+
+fn raw_mul(a: AhpclDecimal, b: AhpclDecimal) -> AhpclDecimal {
+    match a.mantissa.checked_mul(b.mantissa) {
+        Some(m) => AhpclDecimal::ok(m, a.scale + b.scale),
+        None => AhpclDecimal::fail(),
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_deci_sub(out: *mut AhpclDecimal, a: *const AhpclDecimal, b: *const AhpclDecimal) {
-    let (a, b) = (*a, *b);
-    *out = match align(a, b).and_then(|(x, y, s)| Some((x.checked_sub(y)?, s))) {
-        Some((m, s)) => AhpclDecimal::ok(m, s),
-        None => AhpclDecimal::fail(),
-    };
+    *out = checked_deci(raw_sub(*a, *b));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_deci_mul(out: *mut AhpclDecimal, a: *const AhpclDecimal, b: *const AhpclDecimal) {
-    let (a, b) = (*a, *b);
-    *out = match a.mantissa.checked_mul(b.mantissa) {
-        Some(m) => AhpclDecimal::ok(m, a.scale + b.scale),
-        None => AhpclDecimal::fail(),
-    };
+    *out = checked_deci(raw_mul(*a, *b));
 }
 
 #[no_mangle]
@@ -285,7 +294,26 @@ pub unsafe extern "C" fn ahpcl_deci_div(
     b: *const AhpclDecimal,
     digits: u32,
 ) {
-    *out = deci_div(*a, *b, digits);
+    if (*b).mantissa == 0 {
+        fail_with("AHPCL-RUN-0002", "division by zero");
+    }
+    *out = checked_deci(deci_div(*a, *b, digits));
+}
+
+/// A failed decimal means overflow or a zero divisor. Generated code has no way to
+/// inspect the flag, so the runtime stops here rather than handing back a silent 0.
+fn checked_deci(d: AhpclDecimal) -> AhpclDecimal {
+    if d.failed != 0 {
+        fail_with("AHPCL-RUN-0001", "this decimal arithmetic overflowed");
+    }
+    d
+}
+
+fn checked_rat(r: AhpclRational) -> AhpclRational {
+    if r.failed != 0 {
+        fail_with("AHPCL-RUN-0001", "this rational arithmetic overflowed or divided by zero");
+    }
+    r
 }
 
 fn deci_div(a: AhpclDecimal, b: AhpclDecimal, digits: u32) -> AhpclDecimal {
@@ -591,22 +619,25 @@ fn rat_div(a: AhpclRational, b: AhpclRational) -> AhpclRational {
 
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_rat_add(out: *mut AhpclRational, a: *const AhpclRational, b: *const AhpclRational) {
-    *out = rat_add(*a, *b);
+    *out = checked_rat(rat_add(*a, *b));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_rat_sub(out: *mut AhpclRational, a: *const AhpclRational, b: *const AhpclRational) {
-    *out = rat_sub(*a, *b);
+    *out = checked_rat(rat_sub(*a, *b));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_rat_mul(out: *mut AhpclRational, a: *const AhpclRational, b: *const AhpclRational) {
-    *out = rat_mul(*a, *b);
+    *out = checked_rat(rat_mul(*a, *b));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_rat_div(out: *mut AhpclRational, a: *const AhpclRational, b: *const AhpclRational) {
-    *out = rat_div(*a, *b);
+    if (*b).num == 0 {
+        fail_with("AHPCL-RUN-0002", "division by zero");
+    }
+    *out = checked_rat(rat_div(*a, *b));
 }
 
 /// The general arithmetic entry points, tagged by operation. These cover the cases the
@@ -817,16 +848,14 @@ mod tests {
         AhpclDecimal::ok(m, s)
     }
 
+    // The raw forms, which report overflow through the flag. The exported entry points
+    // stop the program instead, so they cannot be asserted on from inside a test.
     fn add(a: AhpclDecimal, b: AhpclDecimal) -> AhpclDecimal {
-        let mut out = d(0, 0);
-        unsafe { ahpcl_deci_add(&mut out, &a, &b) };
-        out
+        raw_add(a, b)
     }
 
     fn mul(a: AhpclDecimal, b: AhpclDecimal) -> AhpclDecimal {
-        let mut out = d(0, 0);
-        unsafe { ahpcl_deci_mul(&mut out, &a, &b) };
-        out
+        raw_mul(a, b)
     }
 
     #[test]
