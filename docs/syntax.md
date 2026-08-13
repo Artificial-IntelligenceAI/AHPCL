@@ -315,8 +315,33 @@ Keywords cost nothing here — because names are quoted, a variable called `'to'
 `('to')`, so bare `to` can never collide with it. AHPCL can add keywords freely in a way most
 languages cannot.
 
-**OPEN:** whether selectors double as the general indexing syntax, which would resolve the
-`('a')[('i')]` clash with call brackets.
+### Selectors are the indexing syntax — **DECIDED**
+
+The number of indices decides the result's rank. **One index gives a plain value**, not a
+one-element array:
+
+```
+var:vector:num 'a' [5] = {'10', '20', '30', '40', '50'}.
+
+('a'):3;           → 30              a num
+('a'):1, 3;        → {10, 30}        a vector [2]
+('a'):all;         → the whole thing  a vector [5]
+```
+
+So *n* indices give *n* elements, and one index gives a value. Selectors are therefore the
+general indexing mechanism — no separate syntax is needed, and the `('a')[('i')]` clash with call
+brackets never arises.
+
+Rank depends on how many indices were written, so `('a'):1;` and `('a'):1, 2;` have different
+types. That is fully knowable at compile time given shapes-in-types; it is a rule to state, not a
+hazard.
+
+Rejected: selectors always producing arrays (uniform, but getting a plain number would need a
+second step, and `math { ('a'):3; + 1 }` would become array-plus-scalar rather than ordinary
+arithmetic); and a separate indexing syntax (two mechanisms for one job, needing spare
+punctuation).
+
+**OPEN:** writing to an element.
 
 **DECIDED:** a *bare* array reference in arithmetic sums its elements — see
 [types.md](types.md). `:all;` is what makes an operation position-by-position.

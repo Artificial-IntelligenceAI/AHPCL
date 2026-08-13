@@ -22,9 +22,6 @@ a pure synonym for `[?, ?]`?
 
 **1h. Confirm the element-type order** — `matrix:num` was assumed, never stated.
 
-**1i. Do selectors double as general indexing?** Would settle #13, the `(a)[(i)]` clash with
-call brackets.
-
 ---
 
 ## Diagnostics
@@ -59,7 +56,7 @@ any string context?
 is actionable. Currently "What the heck am I supposed to do?", and it needs code
 `AHPCL-LEX-0001`.
 
-**13. Indexing syntax.** Discussion used `(a)[(i)]`, which clashes with `[…]` for calls.
+**13. Writing to an array element** — reading is settled (selectors), writing is not.
 
 **14c. Confirm `,` extends a `change:`** — recorded as INFERRED from the language-wide comma
 rule. Everything else about `change:` is decided.
