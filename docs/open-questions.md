@@ -39,9 +39,8 @@ decided.
 **26. Confirm the comparison family** — `!=`/`≠`, `<`, `>`, `<=`/`≤`, `>=`/`≥`. Equality itself is
 decided (`=` inside `math { }`).
 
-**27. Array length.** Nothing can report how long an array is. This makes `[?]` shapes nearly
-unusable — a file-read array cannot be looped over, since
-`loop:var:int 'i' = math { 1 to ??? }` has nothing to put there.
+**27. What does `:length;` give for a matrix?** `[3, 4]` has 12 elements but two dimensions.
+Vector length is decided (`('data'):length;`).
 
 **28. May a `math { }` block be a `print` argument?** `print["Total: " math { ('a') }]` — print
 takes juxtaposed items; whether an expression counts was never stated.

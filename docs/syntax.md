@@ -331,6 +331,28 @@ coexist, since `|a|b|c|` is ambiguous. A forgotten separator is also silent ther
 Also rejected: dropping the repeated `:` (`('m'):1, 3; 2, 4;`). Indices can be variables, so after
 a `;` the parser cannot tell whether `('b')` opens another dimension or is the next operand.
 
+### Selector keywords — **DECIDED**
+
+Selectors carry keywords as well as indices. `length` asks how long an array is:
+
+```
+var:vector:num 'data' [?] = read["measurements.csv"].
+loop:var:int 'i' = math { 1 to ('data'):length; } { … }.
+```
+
+Without this, `[?]` shapes were nearly unusable — an array read from a file could not be looped
+over, because the range had nothing to count to.
+
+Selectors therefore do two jobs: pick elements (`:all;`, `:3;`, `:1, 3, 9;`, `:1 to 100;`) and ask
+about the array (`:length;`).
+
+Rejected: a quoted builtin function (`'length'[('data')]`), which would have settled the
+builtin-call rule as a side effect; and a bare builtin (`length[…]`), which makes bare-versus-quoted
+a per-builtin judgement.
+
+**Note:** because `length` is not a function, the question of whether value-returning builtins are
+quoted remains open.
+
 ### Ranges — **DECIDED**
 
 ```
