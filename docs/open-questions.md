@@ -32,6 +32,21 @@ decided.
 
 ---
 
+## Gaps found by writing a sample program (2026-08-12)
+
+**25. Division.** The operator table has `* x` multiply, `^ ** xx` power, `+ -` add/subtract —
+and no division at all. `÷` was listed as safe-to-alias, but the base operator was never chosen.
+
+**26. Equality.** `=` already means assignment, so `math { ('i') = 3 }` conflicts. `>` and `<`
+appear in examples; equality, inequality, `>=` and `<=` have no decided spelling.
+
+**27. Array length.** Nothing can report how long an array is. This makes `[?]` shapes nearly
+unusable — a file-read array cannot be looped over, since
+`loop:var:int 'i' = math { 1 to ??? }` has nothing to put there.
+
+**28. May a `math { }` block be a `print` argument?** `print["Total: " math { ('a') }]` — print
+takes juxtaposed items; whether an expression counts was never stated.
+
 ## Syntax
 
 **3. Which Unicode symbols are aliases.** "Probably every, idk". The safe list
