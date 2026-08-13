@@ -96,8 +96,9 @@ This is why `infnum` is not redundant: it is how unbounded is requested explicit
 
 The Informer reports every inference — see [diagnostics.md](diagnostics.md).
 
-**OPEN:** function parameters almost certainly must state precision explicitly, since
-analysis cannot follow a value across all possible callers. Not confirmed.
+Function **parameters** may state precision, because parameters are ordinary declarations — see
+[syntax.md](syntax.md). That matters, since range analysis cannot follow a value across every
+possible caller.
 
 ## Literal types — **DECIDED**
 
@@ -190,7 +191,7 @@ Programmer-supplied loop invariants, verified by induction — the compiler chec
 holds on entry and is preserved by each iteration, then uses it as a fact.
 
 ```
-loop while math { ('n') > 1 } invariant math { ('n') >= 1 } { … }
+loop:while math { ('n') > 1 } invariant math { ('n') >= 1 } { … }
 ```
 
 This is what SPARK (avionics, rail), F\* (shipped TLS code), Dafny and Liquid Haskell do. The
