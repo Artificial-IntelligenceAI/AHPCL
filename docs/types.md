@@ -434,6 +434,14 @@ Rejected: always-rational (`10 / 4` giving `5/2` when `2.5` was wanted, forcing 
 conversion) and always-decimal (`1 / 3` silently losing information, which the exact/symbolic
 domain exists to avoid).
 
+**Consequence:** any function returning a division must declare a **concrete** type. `num` spans
+`rat` and `deci`, so it does not pin the result:
+
+```
+func:num  'mean' [ … ] { handback math { ('values') / ('values'):length; }. }.   # ERROR: ambiguous
+func:deci 'mean' [ … ] { handback math { ('values') / ('values'):length; }. }.   # fine
+```
+
 **OPEN:** integer division and remainder have no spelling.
 
 ## Deferred types — **DECIDED to defer**

@@ -39,9 +39,6 @@ decided.
 **26. Confirm the comparison family** — `!=`/`≠`, `<`, `>`, `<=`/`≤`, `>=`/`≥`. Equality itself is
 decided (`=` inside `math { }`).
 
-**28. May a `math { }` block be a `print` argument?** `print["Total: " math { ('a') }]` — print
-takes juxtaposed items; whether an expression counts was never stated.
-
 ## Syntax
 
 **3. Which Unicode symbols are aliases.** "Probably every, idk". The safe list

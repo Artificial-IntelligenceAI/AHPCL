@@ -543,6 +543,17 @@ print["The variable \"x\" is " ('x') " and that is that."].
 
 Items inside `print[…]` are **space-separated, no commas**.
 
+**Arguments are string literals and references only** — **DECIDED**. Math blocks, function calls
+and conditionals are **not** print arguments; compute first, then print:
+
+```
+var:deci 'total' = math { ('areas') }.
+print["Total: " ('total')].
+```
+
+Accepted cost: showing a calculation always needs a temporary variable. Rejected alternative was
+allowing any expression, which would have let `print["Total: " math { ('areas') }]` work directly.
+
 **INFERRED:** adjacent items concatenate. **OPEN:** whether that is specific to `print` or
 a general rule, and whether `('x')` interpolation works in any string context.
 
