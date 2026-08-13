@@ -66,8 +66,6 @@ rule. Everything else about `change:` is decided.
 
 **14f. Is `none` legal outside a return type?** `var:none 'x'` is meaningless; presumably an error.
 
-**14d. Unary minus.** `-('x')` as negation rather than subtraction has never been decided.
-
 ---
 
 ## Types

@@ -186,6 +186,28 @@ digit-lookahead rule.
 `×` was briefly a multiplication alias and was **removed** on 2026-08-10 — it now means cross
 product, below.
 
+### Unary minus — **DECIDED**
+
+`-` does both jobs, told apart by **position**: nothing on its left means negation, something on
+its left means subtraction.
+
+```
+math { 5 - 3 }        # subtraction — two operands → 2
+math { -('x') }       # negation — one operand → the opposite sign
+```
+
+Negation flips a number's sign: `5` → `-5`, `-3` → `3`, `0` → `0`. It is what makes absolute
+value work — when `('x')` is `-5`, `-('x')` is `5`.
+
+The same positional logic already sorts out `x`: where a value is expected, `-` negates; where an
+operator is expected, it subtracts.
+
+Rejected: a separate keyword (`neg ('x')`), which nobody writes maths with; and no unary minus at
+all (`math { 0 - ('x') }`), which obscures intent.
+
+Note `-` now has **three** jobs: subtraction, negation, and the negative type prefix (`-int`,
+`-num`). No conflict — the prefix appears in type position, the other two in expression position.
+
 ### `x` requires whitespace — **DECIDED**
 
 `x` is multiplication **only with a space on each side**. `2 x 4` is arithmetic; `2x4` is not.
