@@ -48,8 +48,11 @@ operations that do not exist. `≤ ≥ ≠ ÷` alias things that do exist. `∧ 
 `π` `e` `τ` `∞num` are **decided** (see [syntax.md](syntax.md)).
 `· × ⊙ ⊗` are reserved operations, and `∘` is unassigned.
 
-**3c. Is there a square root**, and are there other maths builtins (`sin`, `log`, `abs`, `round`)?
-None exist. Relates to #6b, whether value-returning builtins are quoted.
+**3c. The rest of the maths operations** — `sin`, `cos`, `log`, `abs`, `floor`, `round`. `sqrt`
+is decided as a prefix operator with word and symbol spellings; whether the others follow the same
+shape is not. Note `|x|` for absolute value is available — `|` was deliberately kept free.
+
+**3d. Prefix operator precedence** — does `math { sqrt ('x') + 1 }` mean `√x + 1` or `√(x + 1)`?
 
 **4. LaTeX notation — which reading?** `\(2^{3}\)` could mean grouping braces on `^` (cheap,
 easy) or genuinely embedded LaTeX math mode (`\frac`, `\sum`, `\int` — a signature feature, and

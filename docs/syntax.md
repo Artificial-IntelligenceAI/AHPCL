@@ -258,6 +258,32 @@ How much of an irrational you get is set by `[n digits]` on the declaration — 
 That keeps it out of arithmetic entirely, so the awkward cases (`∞ - ∞` is undefined, not zero)
 never arise, and it needs no type able to hold it.
 
+### Square root — **DECIDED**
+
+A **prefix operator** inside `math { }`, not a function call. Both spellings legal:
+
+```
+math { sqrt ('x') }
+math { √ ('x') }
+```
+
+It joins the prefix-operator family with `not` and unary `-` — one operand, taken on the right.
+
+Square root asks "what number times itself gives this": `√9` is 3, `√16` is 4. Most square roots
+are **irrational** — `√2` is 1.41421… with no exact decimal *and* no exact fraction — so they use
+the same `[n digits]` mechanism as π:
+
+```
+var:infnum 'd' [50 digits] = math { √2 }.
+var:int 'a' = 'sqrt-of-9-somehow'.     # √9 is exactly 3, so an int can hold it
+```
+
+The result type must be able to hold the answer, which existing rules already enforce — an
+irrational root cannot land in an `int`.
+
+**OPEN:** precedence. `math { sqrt ('x') + 1 }` — is that `√x + 1` or `√(x + 1)`? Prefix operators
+normally bind tighter than binary ones.
+
 ### Boolean operators — **DECIDED**
 
 Words **and** symbols, both legal — the pattern already used for multiplication and power:
