@@ -1,0 +1,9 @@
+[package]
+name = "ahpcl-driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ahpcl-diagnostics.workspace = true
+ahpcl-syntax.workspace = true

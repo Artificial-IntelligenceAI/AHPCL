@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ahpcl",
+    "crates/ahpcl-driver",
+    "crates/ahpcl-syntax",
+    "crates/ahpcl-diagnostics",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Tankun Sriket"]
+
+[workspace.dependencies]
+ahpcl-diagnostics = { path = "crates/ahpcl-diagnostics" }
+ahpcl-syntax = { path = "crates/ahpcl-syntax" }
+ahpcl-driver = { path = "crates/ahpcl-driver" }
+unicode-segmentation = "1"
+unicode-width = "0.2"

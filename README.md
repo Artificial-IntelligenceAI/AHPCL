@@ -15,9 +15,18 @@ print["The variable \"x\" is " ('x') "."].
 
 ## Status
 
-Design in progress. Nothing is implemented yet.
+**v1 iteration, in progress.** Not a stable release.
 
-Planned implementation: Rust host language, LLVM backend, ahead-of-time and JIT compilation.
+Working today: the lexer, the Error Handler, the Informer, and a command line that speaks
+AHPCL's own syntax.
+
+```
+ahpcl task:check. buildfile:examples/stats.ahpcl.
+```
+
+Next: the parser, then the type checker, then LLVM code generation.
+
+Implementation: Rust, LLVM 22 via `inkwell`, ahead-of-time and JIT.
 
 ## Design
 

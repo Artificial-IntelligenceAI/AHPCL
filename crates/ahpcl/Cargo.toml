@@ -1,0 +1,13 @@
+[package]
+name = "ahpcl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ahpcl"
+path = "src/main.rs"
+
+[dependencies]
+ahpcl-driver.workspace = true
+ahpcl-diagnostics.workspace = true

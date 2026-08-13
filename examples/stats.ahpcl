@@ -1,0 +1,12 @@
+#3 Statistics over a set of measurements.
+   Values are literal; file input is not designed yet.
+   This is the sample program the design was tested against.
+
+func:deci 'mean' [var:vector:num 'values' [?]] {
+    handback math { ('values') / ('values'):length; }.
+}.
+
+var:vector:num 'data' [6] = {'2', '4', '4', '4', '5', '9'}.
+var:deci 'avg' = 'mean'[('data')].
+
+print["Mean: " ('avg')].

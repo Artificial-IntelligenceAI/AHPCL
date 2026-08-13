@@ -1,0 +1,9 @@
+[package]
+name = "ahpcl-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ahpcl-diagnostics.workspace = true
+unicode-segmentation.workspace = true
