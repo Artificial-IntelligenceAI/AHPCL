@@ -419,6 +419,33 @@ narrowing chain the same way `var:num` does (**INFERRED**: the order was assumed
 
 **OPEN:** whether `tensor` is legal at rank 1 or 2, or strictly rank 3 and above.
 
+## Irrational results — **DECIDED**
+
+A `deci` **may hold a rounded irrational**, and the Informer reports every rounding:
+
+```
+var:deci 'sd' [64 bit] = math { sqrt (('diffs') / ('diffs'):length;) }.
+```
+```
+informer: main.ahpcl:9:20 — result is irrational; rounded to decimal64 (16 digits)
+```
+
+`sqrt`, `sin`, `log` and friends usually produce irrationals — √2, √10 — which no exact decimal can
+hold. Without this, every square root, distance and standard deviation would have to be
+`infnum [n digits]`, and `deci` would be a money type and nothing else.
+
+**This narrows what exactness means, deliberately.** The guarantee was always about
+*representation choices* — decimals not being binary floats, `0.1` meaning exactly one tenth — not
+about pretending irrational numbers are representable. `0.1 + 0.2 = 0.3` still holds; `sqrt 2`
+is rounded, and says so.
+
+It is not silent: the Informer is on by default at full detail, so every rounding is reported.
+
+Rejected: requiring `infnum [n digits]` for all irrational results (consistent, but exiles `deci`
+from scientific work), and an explicit `round` operator (which fails because **whether a result is
+irrational often is not knowable at compile time** — `sqrt ('x')` is exact when `'x'` is 4 and
+irrational when it is 2, so `round` would be required almost everywhere).
+
 ## Booleans — **DECIDED**
 
 `bool` holds a truth value. Comparisons produce one, and conditions require one:

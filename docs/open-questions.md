@@ -34,14 +34,6 @@ decided.
 
 ## Gaps found by writing sample programs
 
-**30. Can an irrational *result* land in a `deci`?** `sqrt` usually produces an irrational —
-√2, √10, √7 — and `deci` is an exact decimal type. By current rules
-`var:deci 'x' = math { sqrt 2 }.` must error exactly as `var:infnum 'x' = math { π }.` does, which
-would mean **no square root can ever produce a `deci`** and standard deviation, distance and all
-geometry must be `infnum [n digits]`. The alternative — letting `deci` hold a rounded
-approximation — is silent precision loss. Neither is obviously right; the sharpest open question
-in the type system.
-
 **31. Reading files.** `read["measurements.csv"]` appears throughout the docs as illustration and
 was never designed. Relates to #6b (are non-maths builtins bare or quoted?).
 

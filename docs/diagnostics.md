@@ -28,6 +28,7 @@ informer: main.ahpcl:12:3 — range analysis proved 'n' ∈ [1, 100]; +int verif
 informer: main.ahpcl:20:7 — +int on 'n' unproven; runtime check inserted
 informer: main.ahpcl:9:5  — 'y' here shadows 'y' declared at 3:1
 informer: main.ahpcl:12:20 — 'w' passed as int where num expected; widened
+informer: main.ahpcl:9:20  — result is irrational; rounded to decimal64 (16 digits)
 ```
 
 Live progress during compile-time evaluation, rate-limited to roughly every 250 ms, with a
