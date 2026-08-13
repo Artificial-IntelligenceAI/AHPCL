@@ -92,8 +92,7 @@ names not chosen.
 
 **16. Review the sign algebra** table in [types.md](types.md) — derived, not dictated.
 
-**17. Function parameter precision** — must it be stated explicitly, since range analysis cannot
-follow values across callers?
+**17. Resolved** — parameters are ordinary declarations, so they may state precision.
 
 *(Numbering has gaps where items were resolved or removed. Kept stable so references hold.)*
 

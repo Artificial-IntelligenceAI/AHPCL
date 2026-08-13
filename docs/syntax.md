@@ -728,9 +728,55 @@ category).
 form declares its variable or uses an existing one, and whether loops are expressions with a
 value the way conditionals are.
 
+## Functions — **partially decided**
+
+### Definitions — **DECIDED**
+
+```
+func:num 'area' [var:+num 'width', 'height'] {
+    handback math { ('width') x ('height') }.
+}.
+```
+
+The type after `func:` is the **return type** — what the function hands back. Parameters carry
+their own types. Both follow the same rule as everywhere else: *the type describes what you get
+when you use the name.*
+
+```
+var:num 'x'       →  ('x')      gives a num
+func:num 'area'   →  area[…]    gives a num
+```
+
+The `handback` value is checked against the return type:
+
+```
+handback "hello".
+```
+```
+error: 'area' produces num, but this hands back str
+```
+
+**Parameters are ordinary declarations**, which is the main reason for this shape — the entire
+existing grammar works on them with no new rules:
+
+```
+func:num 'total' [var:matrix:num 'data' [?, 3] [32 bit]] { … }.
+```
+
+That parameter has an unknown-row shape *and* a precision, neither of which needed inventing.
+`,` extends the list, so `[var:+num 'width', 'height']` gives both parameters the same type.
+
+This also settles parameter precision (previously open): yes, because parameters are declarations.
+
+Rejected: a return type after an arrow (`func 'area' […] -> num`), which needs new punctuation and
+moves the type out of the position every other type occupies; and parameters without `var:`, which
+would create a second declaration grammar and re-open precision, shapes and sign prefixes.
+
+**OPEN:** how a function is **called**; what a function that produces nothing looks like.
+
 ## Not yet designed
 
-Function definitions, indexing, modules, error handling, custom types.
+Indexing, modules, error handling, custom types.
 
 `set 'x' = …`, `loop while … { }`, and `invariant` appear in discussion examples as
 **PROPOSED** placeholders only — Claude invented those spellings. Indexing was written
