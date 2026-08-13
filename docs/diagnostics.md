@@ -113,8 +113,8 @@ file: main.ahpcl
 line: 3
 column: 11
 
-     3 | set 'n' = math { ('n') - 20 }.
-       |           ^^^^^^^^^^^^^^^^^^ this can make it -10
+     3 | change:var:int 'n' = math { ('n') - 20 }.
+       |                      ^^^^^^^^^^^^^^^^^^ this can make it -10
 
 rule conditions: a +int must be above 0 at every point in the program.
 suggest fix: declare 'n' as :int, or check the value before assigning.
@@ -144,8 +144,8 @@ column: 11
 
      1 | var:+int 'n' = '10'.
        |     ^^^^ 'n' promises to stay above 0 here
-     3 | set 'n' = math { ('n') - 20 }.
-       |           ^^^^^^^^^^^^^^^^^^ but this can make it -10
+     3 | change:var:int 'n' = math { ('n') - 20 }.
+       |                      ^^^^^^^^^^^^^^^^^^ but this can make it -10
 
 rule conditions: a +int must be above 0 at every point in the program.
 suggest fix: declare 'n' as :int, or check the value before assigning.
