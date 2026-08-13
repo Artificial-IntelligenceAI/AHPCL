@@ -36,8 +36,8 @@ decided.
 
 **25. Integer division and remainder** have no spelling. Division itself is decided.
 
-**26. Equality.** `=` already means assignment, so `math { ('i') = 3 }` conflicts. `>` and `<`
-appear in examples; equality, inequality, `>=` and `<=` have no decided spelling.
+**26. Confirm the comparison family** — `!=`/`≠`, `<`, `>`, `<=`/`≤`, `>=`/`≥`. Equality itself is
+decided (`=` inside `math { }`).
 
 **27. Array length.** Nothing can report how long an array is. This makes `[?]` shapes nearly
 unusable — a file-read array cannot be looped over, since

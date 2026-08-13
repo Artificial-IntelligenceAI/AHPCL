@@ -190,6 +190,32 @@ remainder have no decided spelling.
 `×` was briefly a multiplication alias and was **removed** on 2026-08-10 — it now means cross
 product, below.
 
+### Comparison — **DECIDED**
+
+`=` means **equality inside `math { }`** and **assignment outside it** — the same context-decides
+rule already used for `.` versus the decimal point, and for the same reason: math blocks are a
+distinct lexer mode.
+
+```
+math { ('i') = 3 }              # is i equal to 3
+var:num 'x' = math { 5 + 3 }.   # assignment
+```
+
+No new symbol, and `math { ('i') = 3 }` reads exactly like mathematics.
+
+Rejected: `==` (a programmer's convention, not a mathematical one, in a language built around real
+notation) and `≡` (most honest, but not on a keyboard, so it would need an ASCII fallback anyway).
+
+The rest of the family — **PROPOSED**, implied but not separately confirmed:
+
+| Operation | Spellings |
+|---|---|
+| Equal | `=` |
+| Not equal | `!=`, `≠` |
+| Less / greater | `<`, `>` |
+| Less or equal | `<=`, `≤` |
+| Greater or equal | `>=`, `≥` |
+
 ### Unary minus — **DECIDED**
 
 `-` does both jobs, told apart by **position**: nothing on its left means negation, something on
