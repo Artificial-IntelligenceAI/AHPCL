@@ -341,7 +341,28 @@ second step, and `math { ('a'):3; + 1 }` would become array-plus-scalar rather t
 arithmetic); and a separate indexing syntax (two mechanisms for one job, needing spare
 punctuation).
 
-**OPEN:** writing to an element.
+### Writing to an element — **DECIDED**
+
+A selector on the left of a `change:`, with the **element** type stated:
+
+```
+var:vector:num 'a' [5] = {'10', '20', '30', '40', '50'}.
+change:var:num 'a':3; = '99'.
+```
+
+The stated type describes what is being written, so it agrees with the value on the right — the
+line reads as "change the num at position 3 of a". The selector says which part.
+
+Multi-dimensional writes chain the same way reads do:
+
+```
+change:var:num 'm':2;:3; = '99'.
+```
+
+Rejected: stating the variable's type (`change:var:vector:num 'a':3; = '99'.`), where the line
+would claim `vector:num` while assigning a single value; and disallowing element writes entirely
+(clean for an array-first language, but filling a table or updating a running result would take a
+whole comprehension to change one number).
 
 **DECIDED:** a *bare* array reference in arithmetic sums its elements — see
 [types.md](types.md). `:all;` is what makes an operation position-by-position.

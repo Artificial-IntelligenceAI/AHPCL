@@ -56,8 +56,6 @@ any string context?
 is actionable. Currently "What the heck am I supposed to do?", and it needs code
 `AHPCL-LEX-0001`.
 
-**13. Writing to an array element** — reading is settled (selectors), writing is not.
-
 **14c. Confirm `,` extends a `change:`** — recorded as INFERRED from the language-wide comma
 rule. Everything else about `change:` is decided.
 
