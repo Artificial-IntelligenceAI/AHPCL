@@ -1,0 +1,29 @@
+#4 A tour of AHPCL, using only decided syntax.
+   Rectangle areas from paired measurements, then some statistics.
+   Design test — this parses, but does not run yet.
+
+func:num 'area' [var:+num 'width', 'height'] {
+    handback math { ('width') x ('height') }.
+}.
+
+func:deci 'mean' [var:vector:num 'values' [?]] {
+    handback math { ('values') / ('values'):length; }.
+}.
+
+var:vector:+num 'widths'  [3] = {'3', '5', '2'}.
+var:vector:+num 'heights' [3] = {'4', '6', '8'}.
+
+var:vector:num 'areas' = loop:var:int 'i' = math { 1 to 3 } {
+    handback 'area'[('widths'):('i'); ('heights'):('i');].
+}.
+
+var:deci 'avg' = 'mean'[('areas')].
+
+var:str 'verdict' = if math { ('avg') > 20 } {
+    handback "large".
+}, else {
+    handback "small".
+}.
+
+print["Average area: " ('avg')].
+print["Verdict: " ('verdict')].

@@ -317,6 +317,16 @@ Fusion — collapsing `a + b ⊙ c` into a single pass over memory instead of th
 Sign refinements extend elementwise: a vector of `+int` means every element is positive, so
 its sum and its dot product with another `+int` vector are both `+int`.
 
+**The sign is written after the rank**, because it refines the *element* type:
+
+```
+var:vector:+num 'widths' [3] = {'3', '5', '2'}.
+```
+
+Found while building the parser (2026-08-12): the docs said "a vector of `+int`" without
+saying where the `+` goes. `+vector:num` would describe a "positive vector", which means
+nothing; `vector:+num` describes a vector of positive numbers, which is the intent.
+
 **OPEN:** array type syntax and array literals. `var:vec:num 'a' = …` appears in discussion
 but `vec` is Claude's invention, not a decision.
 

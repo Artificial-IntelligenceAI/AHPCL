@@ -387,7 +387,7 @@ impl<'a> Lexer<'a> {
         }
         let text = self.text[start..self.pos].to_string();
 
-        if !self.in_math() && !self.inside_brackets() {
+        if !self.in_math() && !self.inside_brackets() && !self.inside_selector() {
             self.errors.push(Error::new(
                 E_BARE_NUMBER,
                 Span::new(start, self.pos),
@@ -396,6 +396,34 @@ impl<'a> Lexer<'a> {
             ));
         }
         self.push(TokenKind::Number(text), start);
+    }
+
+    /// Selector indices are bare whole numbers: `('a'):1, 3, 9;`.
+    ///
+    /// A selector opens with a `:` that follows `)` (the end of a reference), `;` (the
+    /// close of the previous selector in a chain), or a quoted name (the target of a
+    /// `change:`). It closes at `;`. Every other `:` follows a bare word — `var:num`,
+    /// `matrix:num`, `task:build` — so there is no ambiguity.
+    fn inside_selector(&self) -> bool {
+        for (i, tok) in self.tokens.iter().enumerate().rev() {
+            match tok.kind {
+                TokenKind::Semicolon => return false,
+                TokenKind::Colon => {
+                    let prev = i.checked_sub(1).map(|j| &self.tokens[j].kind);
+                    return matches!(
+                        prev,
+                        Some(TokenKind::RParen)
+                            | Some(TokenKind::Semicolon)
+                            | Some(TokenKind::Quoted(_))
+                    );
+                }
+                TokenKind::Dot | TokenKind::LBrace | TokenKind::MathOpen | TokenKind::RBrace => {
+                    return false
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Shapes (`[3, 4]`) and precision (`[32 bit]`) hold bare whole numbers.

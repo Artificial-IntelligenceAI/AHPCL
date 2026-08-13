@@ -8,12 +8,13 @@ pub mod cli;
 use std::time::Instant;
 
 use ahpcl_diagnostics::{error, Error, Informer, SourceFile};
-use ahpcl_syntax::lex;
+use ahpcl_syntax::{lex, parse, Program};
 
 pub struct Report {
     pub source: SourceFile,
     pub errors: Vec<Error>,
     pub informer: Informer,
+    pub program: Program,
 }
 
 impl Report {
@@ -31,25 +32,40 @@ impl Report {
     }
 }
 
-/// `task:check` — lex, and report what is wrong.
+/// `task:check` — lex, parse, and report what is wrong.
 ///
-/// Only the lexer exists so far; the parser and the rest follow.
+/// The type checker and code generation follow; this is a v1 iteration.
 pub fn check(name: impl Into<String>, text: impl Into<String>) -> Report {
     let source = SourceFile::new(name, text);
     let mut informer = Informer::new();
+    let mut errors = Vec::new();
 
     let started = Instant::now();
     let lexed = lex(&source.text);
-    let elapsed = started.elapsed();
+    let lex_time = started.elapsed();
+    let token_count = lexed.tokens.len();
+    errors.extend(lexed.errors);
 
     informer.say_global(format!(
-        "lexed {} line{} in {}",
+        "lexed {} line{} into {token_count} tokens in {}",
         source.line_count(),
         if source.line_count() == 1 { "" } else { "s" },
-        format_duration(elapsed)
+        format_duration(lex_time)
     ));
 
-    Report { source, errors: lexed.errors, informer }
+    let started = Instant::now();
+    let parsed = parse(lexed.tokens);
+    let parse_time = started.elapsed();
+    errors.extend(parsed.errors);
+
+    informer.say_global(format!(
+        "parsed {} statement{} in {}",
+        parsed.program.statements.len(),
+        if parsed.program.statements.len() == 1 { "" } else { "s" },
+        format_duration(parse_time)
+    ));
+
+    Report { source, errors, informer, program: parsed.program }
 }
 
 /// Human-readable durations. Sub-millisecond work is common, so µs matter.
@@ -73,18 +89,39 @@ mod tests {
     #[test]
     fn a_clean_file_reports_nothing() {
         let r = check("t.ahpcl", "print[\"Hello, World!\"].\n");
-        assert!(r.ok());
+        assert!(r.ok(), "{}", r.errors_text());
         assert_eq!(r.errors_text(), "");
+        assert_eq!(r.program.statements.len(), 1);
+    }
+
+    #[test]
+    fn the_stats_example_checks_clean() {
+        let src = include_str!("../../../examples/stats.ahpcl");
+        let r = check("stats.ahpcl", src);
+        assert!(r.ok(), "{}", r.errors_text());
+        assert_eq!(r.program.statements.len(), 4);
     }
 
     #[test]
     fn a_broken_file_reports_through_the_error_handler() {
-        let r = check("t.ahpcl", "math { 5 \u{2212} 3 }\n");
+        // A pasted minus sign. The lexer names it; the parser then also complains,
+        // since what is left is not a well-formed statement.
+        let r = check("t.ahpcl", "var:num 'x' = math { 5 \u{2212} 3 }.\n");
         assert!(!r.ok());
         let text = r.errors_text();
         assert!(text.starts_with("AHPCL Error Handler:"));
         assert!(text.contains("U+2212 MINUS SIGN"));
+        assert!(text.contains("did you mean '-'"));
+        assert!(text.contains("error"));
+    }
+
+    #[test]
+    fn one_error_reads_singular_and_is_not_numbered() {
+        let r = check("t.ahpcl", "var:num 'x' = 1000.\n");
+        let text = r.errors_text();
+        assert!(text.contains("there's something wrong"));
         assert!(text.contains("1 error found."));
+        assert!(!text.contains("Error 1 of"));
     }
 
     #[test]

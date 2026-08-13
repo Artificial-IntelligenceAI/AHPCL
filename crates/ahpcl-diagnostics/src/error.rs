@@ -12,6 +12,8 @@ use crate::position::{SourceFile, Span};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Category {
     Lex,
+    /// Parse errors — a well-formed token stream that is not a well-formed program.
+    Syn,
     Type,
     Prec,
     Sign,
@@ -24,6 +26,7 @@ impl Category {
     fn as_str(self) -> &'static str {
         match self {
             Category::Lex => "LEX",
+            Category::Syn => "SYN",
             Category::Type => "TYPE",
             Category::Prec => "PREC",
             Category::Sign => "SIGN",

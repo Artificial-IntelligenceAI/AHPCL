@@ -211,11 +211,18 @@ meaningful but tempting to reword — and surviving rewording is the whole reaso
 
 Codes are **never reused**, so the list only grows.
 
+`SYN` was added while building the parser (2026-08-12) — parse errors are neither lexical nor
+type errors, and had nowhere to live.
+
 Categories and the errors decided so far:
 
 | Code | Error |
 |---|---|
 | `AHPCL-LEX-0001` | comment line-count runs past end of file |
+| `AHPCL-LEX-0002` | an unclosed `'…'` or `"…"` |
+| `AHPCL-LEX-0003` | an escape AHPCL does not know |
+| `AHPCL-LEX-0005` | a bare number outside `math { }` |
+| `AHPCL-SYN-0001` | a well-formed token stream that is not a well-formed program |
 | `AHPCL-LEX-0002` | unexpected character `−` (U+2212) — did you mean `-`? |
 | `AHPCL-TYPE-0001` | numeric literal with nothing to pin its type |
 | `AHPCL-PREC-0001` | precision unstated and not knowable at compile time |
