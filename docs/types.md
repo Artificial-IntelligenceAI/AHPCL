@@ -410,8 +410,11 @@ exists to catch.
 
 `bool` is outside the numeric hierarchy — it is not a `num`.
 
-**OPEN:** what the literals are called (`true`/`false`?), and whether and/or/not are words,
-symbols, or both.
+Literals are `'true'` and `'false'`, quoted like every other value:
+
+```
+var:bool 'ready' = 'true'.
+```
 
 ## Text — **DECIDED**
 

@@ -45,6 +45,7 @@ decided (`=` inside `math { }`).
 **3. Which Unicode symbols are aliases.** Mostly **blocked**: half the old "safe list" needs
 operations that do not exist. `≤ ≥ ≠ ÷` alias things that do exist. `∧ ∨ ¬` need boolean operators;
 `∈` needs sets; `π` and `∞` need constants; `√` needs square root; `≈` needs a tolerance rule.
+`∧ ∨ ¬` are now **decided** (see [syntax.md](syntax.md)).
 `· × ⊙ ⊗` are reserved operations, and `∘` is unassigned.
 
 **3b. Are there constants at all?** `π`, `∞`, `e` — nothing in the language provides a named

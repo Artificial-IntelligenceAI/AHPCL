@@ -224,6 +224,27 @@ The rest of the family — **PROPOSED**, implied but not separately confirmed:
 | Less or equal | `<=`, `≤` |
 | Greater or equal | `>=`, `≥` |
 
+### Boolean operators — **DECIDED**
+
+Words **and** symbols, both legal — the pattern already used for multiplication and power:
+
+| Operation | Spellings |
+|---|---|
+| And | `and`, `∧` |
+| Or | `or`, `∨` |
+| Not | `not`, `¬` |
+
+```
+if math { ('a') > 5 and ('b') < 10 } { … }.
+if math { ('a') > 5 ∧ ('b') < 10 } { … }.
+if math { not ('ready') } { … }.
+```
+
+**Bare words are unambiguous inside `math { }`** — a payoff of quoted names. `to`, `by`, `mod`,
+`and`, `or` and `not` can all be plain words with no whitespace rule, because a variable called
+`'and'` is written `('and')` and can never be confused with the operator. Only `x` needs spaces,
+being a single letter.
+
 ### Unary minus — **DECIDED**
 
 `-` does both jobs, told apart by **position**: nothing on its left means negation, something on
