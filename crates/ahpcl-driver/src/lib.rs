@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use ahpcl_diagnostics::{error, Error, Informer, SourceFile};
 use ahpcl_eval::run as evaluate;
-use ahpcl_sema::check as typecheck;
+use ahpcl_sema::{check as typecheck, verify, EvalBudget};
 use ahpcl_syntax::{lex, parse, Program};
 
 pub struct Report {
@@ -38,6 +38,15 @@ impl Report {
 ///
 /// The type checker and code generation follow; this is a v1 iteration.
 pub fn check(name: impl Into<String>, text: impl Into<String>) -> Report {
+    check_with(name, text, EvalBudget::default())
+}
+
+/// As `check`, with control over how much compile-time evaluation is allowed.
+pub fn check_with(
+    name: impl Into<String>,
+    text: impl Into<String>,
+    budget: EvalBudget,
+) -> Report {
     let source = SourceFile::new(name, text);
     let mut informer = Informer::new();
     let mut errors = Vec::new();
@@ -75,6 +84,21 @@ pub fn check(name: impl Into<String>, text: impl Into<String>) -> Report {
         let check_time = started.elapsed();
         errors.extend(checked.errors);
         informer.say_global(format!("type-checked in {}", format_duration(check_time)));
+
+        // Verification only runs on a program that type-checks; otherwise it would
+        // reason about types that are already known to be wrong.
+        if errors.is_empty() {
+            let started = Instant::now();
+            let verified = verify(&parsed.program, &mut informer, budget);
+            let verify_time = started.elapsed();
+            let checks = verified.runtime_checks.len();
+            errors.extend(verified.errors);
+            informer.say_global(format!(
+                "verified in {} ({checks} runtime check{} inserted)",
+                format_duration(verify_time),
+                if checks == 1 { "" } else { "s" }
+            ));
+        }
     }
 
     Report { source, errors, informer, program: parsed.program }
@@ -97,6 +121,18 @@ pub fn run_program(report: &Report) -> RunOutcome {
     let started = Instant::now();
     let out = evaluate(&report.program);
     RunOutcome { lines: out.lines, error: out.error, elapsed: started.elapsed() }
+}
+
+/// Read the `loop-evaluation` flag.
+///
+/// Deliberately a *caller* decision rather than something sniffed from the
+/// environment: the same source must mean the same thing however it was compiled.
+pub fn budget_from_flags(flags: &std::collections::BTreeMap<String, String>) -> EvalBudget {
+    match flags.get("loop-evaluation").map(String::as_str) {
+        Some("limit") | Some("limited") => EvalBudget::Limited(1_000_000),
+        Some("off") | Some("none") => EvalBudget::Off,
+        _ => EvalBudget::Unlimited,
+    }
 }
 
 /// What `task:build` produced.

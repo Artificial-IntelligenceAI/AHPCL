@@ -3,7 +3,9 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
-use ahpcl_driver::{build_program, check, cli, format_duration, run_program, Built};
+use ahpcl_driver::{
+    budget_from_flags, build_program, check_with, cli, format_duration, run_program, Built,
+};
 
 fn main() -> ExitCode {
     let started = Instant::now();
@@ -71,7 +73,7 @@ fn main() -> ExitCode {
             }
         };
 
-        let report = check(path.clone(), text);
+        let report = check_with(path.clone(), text, budget_from_flags(&cmd.flags));
 
         // The Informer and the Error Handler both go to stderr, so anything piped
         // from stdout stays clean.

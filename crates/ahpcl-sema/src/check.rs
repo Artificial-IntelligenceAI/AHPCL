@@ -128,7 +128,7 @@ impl<'a> Checker<'a> {
                         && ty.shape.is_some()
                         && !got.fits_in(&ty);
                     if !shape_only {
-                        self.require_fits(&got, &ty, value.span, "assigned");
+                        self.require_fits_deferring_sign(&got, &ty, value.span, "assigned");
                     }
                     // A literal may determine the shape when none was written.
                     if ty.shape.is_none() {
@@ -214,7 +214,7 @@ impl<'a> Checker<'a> {
             }
 
             if let Some(got) = self.expr(&target.value, Some(&want)) {
-                self.require_fits(&got, &want, target.value.span, "assigned");
+                self.require_fits_deferring_sign(&got, &want, target.value.span, "assigned");
             }
         }
     }
@@ -987,6 +987,26 @@ impl<'a> Checker<'a> {
 
     // ── checks ──────────────────────────────────────────────────────────────
 
+    /// A sign-only mismatch on an assignment is **not** a type error.
+    ///
+    /// The sign algebra is deliberately conservative — `+int - +int` widens to `int`,
+    /// because `7 - 7` is 0. Rejecting here would make the refinement useless with
+    /// mutation, and would pre-empt the very thing verification exists to decide:
+    /// layer 1 evaluates it, layer 2 analyses the range, layer 3 inserts a check.
+    ///
+    /// Call arguments and handbacks stay strict, because verification does not reason
+    /// across function boundaries.
+    fn require_fits_deferring_sign(&mut self, got: &Type, want: &Type, span: Span, what: &str) {
+        let sign_only = want.sign.is_some()
+            && got.base.fits_in(want.base)
+            && shapes_agree(got, want)
+            && !got.fits_in(want);
+        if sign_only {
+            return;
+        }
+        self.require_fits(got, want, span, what);
+    }
+
     fn require_fits(&mut self, got: &Type, want: &Type, span: Span, what: &str) {
         if got.fits_in(want) {
             if got.widens_to(want) {
@@ -1182,6 +1202,14 @@ fn range_length(from: &Expr, to: &Expr, by: Option<&Expr>) -> Option<u64> {
         return Some(0);
     }
     Some((span / step + 1) as u64)
+}
+
+fn shapes_agree(a: &Type, b: &Type) -> bool {
+    match (&a.shape, &b.shape) {
+        (None, None) => true,
+        (Some(x), Some(y)) => x.agrees_with(y),
+        _ => false,
+    }
 }
 
 /// Whether an expression is a bare array reference — one with no selector.

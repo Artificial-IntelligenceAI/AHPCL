@@ -43,7 +43,6 @@ name = "ahpcl-eval"
 version = "0.1.0"
 dependencies = [
  "ahpcl-diagnostics",
- "ahpcl-sema",
  "ahpcl-syntax",
 ]
 
@@ -52,6 +51,7 @@ name = "ahpcl-sema"
 version = "0.1.0"
 dependencies = [
  "ahpcl-diagnostics",
+ "ahpcl-eval",
  "ahpcl-syntax",
 ]
 

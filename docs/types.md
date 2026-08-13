@@ -253,6 +253,32 @@ behaviour is **set by the caller**, not sniffed from the environment — via
 **OPEN:** the default when the caller says nothing, and whether it varies per task
 (`build` unbounded vs `check` limited).
 
+### Implementation notes (2026-08-12)
+
+All three layers are built, in `crates/ahpcl-sema/src/verify.rs`, over the interval
+analysis in `interval.rs`.
+
+Reaching a fixed point needs **two phases**, which is standard abstract interpretation:
+
+* **Widening** guarantees termination — a range that keeps moving outward jumps straight
+  to unbounded rather than creeping one step per round forever.
+* **Narrowing** then recovers precision. Widening over-approximates: the documented
+  countdown widens to `[-∞, 100]`, and re-running the body without widening pulls it back
+  to the true `[1, 100]`.
+
+The loop condition is re-applied at the top of every round, which is what actually proves
+the countdown stays positive.
+
+**Width inference applies to `int` only.** A decimal's width is an IEEE *format* chosen
+for significant digits, not something derived from a value's range; rationals have no
+width at all. Inferring one from an integer range would be a category error.
+
+**A sign-only mismatch is not a type error.** The sign algebra is conservative —
+`+int - +int` widens to `int`, because `7 - 7` is 0 — so rejecting in the type checker
+would pre-empt the very thing verification exists to decide. Assignments defer to the
+verifier; call arguments and handbacks stay strict, because the analysis does not reason
+across function boundaries.
+
 ### Layer 4: `invariant` clauses — **PROPOSED, roadmap**
 
 Programmer-supplied loop invariants, verified by induction — the compiler checks the claim

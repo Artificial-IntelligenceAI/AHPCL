@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 ahpcl-diagnostics.workspace = true
 ahpcl-syntax.workspace = true
+ahpcl-eval.workspace = true
