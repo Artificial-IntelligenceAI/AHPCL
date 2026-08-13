@@ -58,28 +58,15 @@ is actionable. Currently "What the heck am I supposed to do?", and it needs code
 
 **13. Indexing syntax.** Discussion used `(a)[(i)]`, which clashes with `[…]` for calls.
 
-**14b. Function definitions.** ← *next up.* Three options were put to Tankun; no answer yet.
-
-- **1** — same pattern as everything else, parameters as ordinary declarations:
-  ```
-  func:num 'double' [var:num 'n'] {
-      handback math { ('n') x 2 }.
-  }.
-  ```
-  Reuses the whole declaration grammar for parameters — types, sign refinements, precision,
-  shapes, `,` to extend — with no new rules. Would also settle #17 (parameter precision: yes,
-  because parameters are declarations). Claude's recommendation.
-- **2** — return type after an arrow: `func 'double' [var:num 'n'] -> num { … }.` Familiar, reads
-  left-to-right; costs new punctuation and moves the type out of its usual position.
-- **3** — parameters without `var:`: `func:num 'double' [num 'n'] { … }.` Less typing; creates a
-  second declaration grammar.
-
-**14e. How is a function called?** `print[…]` is bare, but user names are quoted — so
+**14e. How is a function called?** ← *next up.* `print[…]` is bare, but user names are quoted — so
 `double[('x')]`, `'double'[('x')]`, or `('double')[('x')]`? Relates to #6 (whether `[…]` is how
 all calls work).
 
 **14c. Confirm `,` extends a `change:`** — recorded as INFERRED from the language-wide comma
 rule. Everything else about `change:` is decided.
+
+**14f. What does a function that produces nothing look like?** A `func:` with no `handback` — a
+logging function, say. Needs either a "nothing" type name or a different form.
 
 **14d. Unary minus.** `-('x')` as negation rather than subtraction has never been decided.
 
@@ -91,8 +78,6 @@ rule. Everything else about `change:` is decided.
 names not chosen.
 
 **16. Review the sign algebra** table in [types.md](types.md) — derived, not dictated.
-
-**17. Resolved** — parameters are ordinary declarations, so they may state precision.
 
 *(Numbering has gaps where items were resolved or removed. Kept stable so references hold.)*
 
