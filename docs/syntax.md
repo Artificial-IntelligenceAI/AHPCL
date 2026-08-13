@@ -772,7 +772,52 @@ Rejected: a return type after an arrow (`func 'area' […] -> num`), which needs
 moves the type out of the position every other type occupies; and parameters without `var:`, which
 would create a second declaration grammar and re-open precision, shapes and sign prefixes.
 
-**OPEN:** how a function is **called**; what a function that produces nothing looks like.
+### Calls — **DECIDED**
+
+The name is **quoted**, exactly as it was declared; arguments are space-separated with no commas,
+matching `print[…]`:
+
+```
+var:num 'kitchen' = 'area'['3' '4'].
+var:num 'bedroom' = 'area'[('w') ('h')].
+```
+
+Quoting is what makes any legal name callable — `'my helper'[…]` works, where a bare form could
+not. Rejected: bare (`area[…]`), which re-creates the "bare when possible, quoted when not" split
+that always-quoted references were introduced to remove; and reference-style (`('area')[…]`),
+which costs four characters on every call and implies an indirection that does not exist.
+
+**OPEN:** whether `print` is then `'print'[…]`, or stays a builtin *statement* like `if` and
+`loop`. It behaves like a statement — it hands nothing back — which argues for the latter.
+
+### Type nesting — **INFERRED, needs confirming**
+
+Assumed throughout but never stated: the numeric families nest, so a narrower type is accepted
+where a wider one is expected.
+
+```
+        num
+       /        int   deci
+     /    +int  -int
+```
+
+```
+func:num 'area' [var:num 'width', 'height'] { … }.
+
+var:int  'w' = '3'.
+var:deci 'h' = '4.5'.
+var:num  'a' = 'area'[('w') ('h')].     # both accepted — each is a num
+```
+
+Narrower goes in fine, because it is a promise. The reverse does not: a function demanding
+`+num` will not take a plain `num`, which might be negative.
+
+This is what lets one function serve several numeric types **without generics**. Generics would
+only be needed across genuinely unrelated types (a function accepting both `num` and `str`), which
+is why `print` looks like a builtin rather than an ordinary function. Not needed for numeric
+domains; deferred until a real case appears.
+
+**OPEN:** what a function that produces nothing looks like.
 
 ## Not yet designed
 
