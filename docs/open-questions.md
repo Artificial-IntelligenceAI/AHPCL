@@ -96,6 +96,19 @@ than anything decided so far. See [types.md](types.md).
 
 **16. Review the sign algebra** table in [types.md](types.md) — derived, not dictated.
 
+**30. What does a declaration with no value mean?** `var:int 'x'.` currently parses and
+type-checks. The interpreter holds "nothing" in it and prints nothing; the native backend
+has no representation for that and declines to compile the program. Three candidates:
+
+- **a compile error** — nothing can be read before it is written. Fits "compile-time errors
+  over silent defaults", and is the only option that needs no new runtime value.
+- **the zero of the type** — 0, `false`, `""`, `{}`. Convenient, but a silent default.
+- **a real "unset" value** that is an error to read — honest, and the most work: every type
+  gains a state, and every read gains a check.
+
+Found while extending AOT to every type, 2026-08-13. Until it is decided, the backend
+declines rather than guessing, so no program silently gets an answer the design never chose.
+
 *(Numbering has gaps where items were resolved or removed. Kept stable so references hold.)*
 
 ---

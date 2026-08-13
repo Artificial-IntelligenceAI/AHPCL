@@ -724,6 +724,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     // A shape on the binding is the declared size; the literal supplies
                     // the elements, and the checker has already cross-checked the two.
                     let Some(value) = &b.value else {
+                        // `var:int 'x'.` with no value: the interpreter holds "nothing"
+                        // and prints nothing, which has no native representation, and
+                        // whether it should instead be 0 or a compile error is not
+                        // decided. Declining beats guessing — see open-questions.md.
                         return Err(Unsupported::new("a declaration with no value"));
                     };
                     let val = self.expr(value, native)?;
@@ -841,6 +845,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(true)
             }
             Stmt::Expr(e) => {
+                // A call performed for its effect hands nothing back, so it must not go
+                // through the value path.
+                if let ExprKind::Call { name, .. } = &e.kind {
+                    if self.fn_repr.get(name).copied() == Some(Native::None) {
+                        self.void_call(e)?;
+                        return Ok(false);
+                    }
+                }
                 self.expr(e, Native::Int)?;
                 Ok(false)
             }
@@ -1398,6 +1410,27 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .call_runtime("ahpcl_num_unary", &[tag.into(), v.into(), digits.into()])
             .ok_or_else(|| Unsupported::new("this operator"))?;
         self.convert(out, Native::Num, want)
+    }
+
+    /// A call to a function that hands nothing back, performed for its effect.
+    fn void_call(&mut self, e: &Expr) -> Result<(), Unsupported> {
+        let ExprKind::Call { name, args } = &e.kind else {
+            return Err(Unsupported::new("a call"));
+        };
+        let Some(function) = self.functions.get(name).copied() else {
+            return Err(Unsupported::new(format!("the function '{name}'")));
+        };
+        let mut values: Vec<BasicMetadataValueEnum> = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            let want = self
+                .fn_params
+                .get(name)
+                .and_then(|ps| ps.get(i).copied())
+                .unwrap_or(Native::Int);
+            values.push(self.expr(a, want)?.into());
+        }
+        self.builder.build_call(function, &values, "").unwrap();
+        Ok(())
     }
 
     /// Move a value between native representations, through the runtime so the result
