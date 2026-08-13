@@ -6,13 +6,36 @@ See [README.md](README.md) for the status legend.
 
 | Type | Holds |
 |---|---|
-| `num` | Integers and decimals, negative and positive, **including 0** |
-| `int` | Integers |
-| `deci` | Decimals (IEEE decimal formats) |
+| `num` | Any exact number, negative and positive, **including 0** |
 | `rat` | Exact rationals — a numerator and a denominator, kept in lowest terms |
+| `deci` | Decimals (IEEE decimal formats) |
+| `int` | Integers |
 | `infnum` | Arbitrary precision — the bignum equivalent |
 
 `rat` was added 2026-08-12, forced by division: `math { 1 / 3 }` has no exact decimal answer.
+Adding it widened `num` from "integers and decimals" to **any exact number**.
+
+### The hierarchy — **DECIDED**
+
+```
+        num
+         |
+        rat
+         |
+        deci
+         |
+        int
+```
+
+It follows the mathematics: every integer is a rational (`5` is `5/1`), every terminating decimal
+is a rational (`2.5` is `5/2`), but not every rational is a decimal (`1/3` is not).
+
+A narrower type satisfies a wider one, so a function taking `rat` accepts integers and decimals
+with no conversion. The reverse never holds.
+
+Rejected: `rat` as a sibling of `int` and `deci` (flatter, but passing an integer to a `rat`
+parameter would fail even though every integer *is* a rational), and `rat` outside `num` entirely
+(which would break generic numeric code the moment fractions appear).
 
 ## Sign refinement — **DECIDED**
 

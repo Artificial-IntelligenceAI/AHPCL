@@ -36,9 +36,6 @@ decided.
 
 **25. Integer division and remainder** have no spelling. Division itself is decided.
 
-**25b. Where does `rat` sit in the type hierarchy?** It now exists, but its relationship to `int`,
-`deci` and `num` is unstated.
-
 **26. Equality.** `=` already means assignment, so `math { ('i') = 3 }` conflicts. `>` and `<`
 appear in examples; equality, inequality, `>=` and `<=` have no decided spelling.
 
