@@ -787,8 +787,24 @@ not. Rejected: bare (`area[…]`), which re-creates the "bare when possible, quo
 that always-quoted references were introduced to remove; and reference-style (`('area')[…]`),
 which costs four characters on every call and implies an indirection that does not exist.
 
-**OPEN:** whether `print` is then `'print'[…]`, or stays a builtin *statement* like `if` and
-`loop`. It behaves like a statement — it hands nothing back — which argues for the latter.
+**`print` stays bare** — **DECIDED**. It is a builtin *statement*, like `if` and `loop`, not an
+ordinary function:
+
+```
+print["Hello, World!"].
+'area'['3' '4'].
+```
+
+Tankun: "print is just print, man." It hands nothing back and is never used as an expression,
+which is statement behaviour.
+
+Accepted cost: there are now two call shapes — bare for `print`, quoted for user functions — so a
+reader must know `print` is builtin. Rejected alternative was `'print'[…]`, uniform with all other
+calls, at the price of a heavier hello-world.
+
+**OPEN:** whether future builtins (`read`, `sqrt`, `length`, `round`) follow `print` and stay
+bare, or are ordinary quoted functions. Each new one will re-raise it until a general rule is
+set.
 
 ### Type nesting — **INFERRED, needs confirming**
 

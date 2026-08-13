@@ -45,7 +45,10 @@ rather than aliases, and `∘` is unassigned.
 easy) or genuinely embedded LaTeX math mode (`\frac`, `\sum`, `\int` — a signature feature, and
 a second parser). Note `\` is already the escape character.
 
-**6. Is `[…]` how all calls work** — `add[1 2]`, space-separated, no commas anywhere?
+**6. Resolved** — `[…]` with space-separated arguments and no commas, for both `print` and user
+functions.
+
+**6b. Do future builtins stay bare like `print`**, or become ordinary quoted functions?
 
 **7. Is juxtaposition-concatenation general** or specific to `print`? Does `(x)` interpolate in
 any string context?
@@ -61,8 +64,6 @@ is actionable. Currently "What the heck am I supposed to do?", and it needs code
 **14g. Confirm the type hierarchy** — that `int` and `deci` are kinds of `num`, and `+int` a kind
 of `int`, so narrower types pass where wider ones are expected. Assumed throughout, never stated.
 Without it, one function per numeric type.
-
-**14h. Is `print` a function or a statement?** It hands nothing back, which argues for statement.
 
 **14c. Confirm `,` extends a `change:`** — recorded as INFERRED from the language-wide comma
 rule. Everything else about `change:` is decided.
