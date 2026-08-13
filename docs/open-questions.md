@@ -67,8 +67,7 @@ Without it, one function per numeric type.
 **14c. Confirm `,` extends a `change:`** — recorded as INFERRED from the language-wide comma
 rule. Everything else about `change:` is decided.
 
-**14f. What does a function that produces nothing look like?** A `func:` with no `handback` — a
-logging function, say. Needs either a "nothing" type name or a different form.
+**14f. Is `none` legal outside a return type?** `var:none 'x'` is meaningless; presumably an error.
 
 **14d. Unary minus.** `-('x')` as negation rather than subtraction has never been decided.
 

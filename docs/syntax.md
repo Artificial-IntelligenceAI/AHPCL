@@ -817,7 +817,29 @@ only be needed across genuinely unrelated types (a function accepting both `num`
 is why `print` looks like a builtin rather than an ordinary function. Not needed for numeric
 domains; deferred until a real case appears.
 
-**OPEN:** what a function that produces nothing looks like.
+### Functions producing nothing — **DECIDED**
+
+`none` is the type of "hands nothing back":
+
+```
+func:none 'log' [var:str 'message'] {
+    print["[log] " ('message')].
+}.
+```
+
+The type slot is always filled, so `func:` has one shape with no special case.
+
+Rejected: `?`, which **already means "unknown"** in shapes (`[?, 3]`). Unknown and absent are
+different ideas the type system deliberately keeps apart, and one symbol for both would blur
+them. It also reads wrong in diagnostics — *"'log' produces ?"* looks like the compiler is
+unsure, where *"'log' produces none"* states a fact.
+
+Also rejected: omitting the type (absence-means-something, and two shapes for one keyword), and
+requiring every function to produce something (which would force useless values on operations
+that genuinely have no result).
+
+**OPEN:** whether `none` is legal anywhere other than a return type — `var:none 'x'` is
+meaningless and presumably an error.
 
 ## Not yet designed
 
