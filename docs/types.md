@@ -606,3 +606,21 @@ func:deci 'mean' [ … ] { handback math { ('values') / ('values'):length; }. }.
   much slower. Matters for the scientific domain.
 
 Sign prefixes are expected to extend to it.
+
+## A declaration must give a value — **DECIDED**
+
+`var:int 'x'.` is an error, `AHPCL-TYPE-0005`:
+
+```
+rule conditions: 'x' is declared but never given a value.
+suggest fix: give it one, as in var:int 'x' = <value>.
+```
+
+Nothing can be read before it is written, so AHPCL has no unset state — which means no
+silent zero, and no read-time check on every variable in the language. It also means every
+type has exactly one representation in compiled code, with nothing standing for "nothing".
+
+Rejected alternatives: **the zero of the type** (`0`, `false`, `""`, `{}`) — convenient, but
+a silent default, which is the thing AHPCL avoids; and **a real "unset" value that errors on
+read** — honest, but every type gains a state and every read gains a check, for a case the
+error already prevents.

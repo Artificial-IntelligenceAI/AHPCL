@@ -27,6 +27,7 @@ const E_DECI_WIDTH: Code = Code::new(Category::Prec, 3);
 const E_OVERFLOW: Code = Code::new(Category::Prec, 4);
 const E_BAD_WIDTH: Code = Code::new(Category::Prec, 5);
 const E_SIGN_VIOLATION: Code = Code::new(Category::Sign, 1);
+const E_NO_VALUE: Code = Code::new(Category::Type, 5);
 
 pub struct Checked {
     pub errors: Vec<Error>,
@@ -151,6 +152,21 @@ impl<'a> Checker<'a> {
                         }
                     }
                 }
+            } else {
+                // A declaration must say what the variable holds. Nothing can be read
+                // before it is written, and a silent 0 would be exactly the kind of
+                // default AHPCL does not do.
+                self.err(
+                    E_NO_VALUE,
+                    binding.name_span,
+                    format!("'{}' is declared but never given a value.", binding.name),
+                    format!(
+                        "give it one, as in {}:{} '{}' = <value>.",
+                        "var",
+                        v.ty.base,
+                        binding.name
+                    ),
+                );
             }
 
             self.declare(&binding.name, ty, binding.name_span, false);

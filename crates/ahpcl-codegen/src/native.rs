@@ -724,10 +724,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     // A shape on the binding is the declared size; the literal supplies
                     // the elements, and the checker has already cross-checked the two.
                     let Some(value) = &b.value else {
-                        // `var:int 'x'.` with no value: the interpreter holds "nothing"
-                        // and prints nothing, which has no native representation, and
-                        // whether it should instead be 0 or a compile error is not
-                        // decided. Declining beats guessing — see open-questions.md.
+                        // Unreachable for a checked program: `var:int 'x'.` is
+                        // AHPCL-TYPE-0005. Kept because this backend can be handed an
+                        // unchecked tree.
                         return Err(Unsupported::new("a declaration with no value"));
                     };
                     let val = self.expr(value, native)?;
