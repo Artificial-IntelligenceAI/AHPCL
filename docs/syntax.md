@@ -344,7 +344,28 @@ Without this, `[?]` shapes were nearly unusable — an array read from a file co
 over, because the range had nothing to count to.
 
 Selectors therefore do two jobs: pick elements (`:all;`, `:3;`, `:1, 3, 9;`, `:1 to 100;`) and ask
-about the array (`:length;`).
+about the array (`:length;`, `:shape;`).
+
+For higher ranks the two questions get two keywords:
+
+```
+('m'):length;      → 12          total element count of a [3, 4] matrix
+('m'):shape;       → {3, 4}      a vector [2]
+```
+
+`:shape;` hands back an **ordinary vector**, so selectors compose on it with nothing new invented:
+
+```
+('m'):shape;:1;    → 3           the row count
+('m'):shape;:2;    → 4           the column count
+
+loop:var:int 'row' = math { 1 to ('m'):shape;:1; } { … }.
+```
+
+Rejected: `:length;` meaning the first dimension with chaining for the rest — chaining already
+means "select within", and reusing it for dimensions would give one syntax two unrelated jobs. Also
+rejected: restricting `:length;` to vectors, which would stop rank-generic code asking a simple
+question.
 
 Rejected: a quoted builtin function (`'length'[('data')]`), which would have settled the
 builtin-call rule as a side effect; and a bare builtin (`length[…]`), which makes bare-versus-quoted

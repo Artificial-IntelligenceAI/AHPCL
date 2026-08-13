@@ -39,9 +39,6 @@ decided.
 **26. Confirm the comparison family** — `!=`/`≠`, `<`, `>`, `<=`/`≤`, `>=`/`≥`. Equality itself is
 decided (`=` inside `math { }`).
 
-**27. What does `:length;` give for a matrix?** `[3, 4]` has 12 elements but two dimensions.
-Vector length is decided (`('data'):length;`).
-
 **28. May a `math { }` block be a `print` argument?** `print["Total: " math { ('a') }]` — print
 takes juxtaposed items; whether an expression counts was never stated.
 
