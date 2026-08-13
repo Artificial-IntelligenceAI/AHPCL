@@ -34,7 +34,8 @@ decided.
 
 ## Gaps found by writing a sample program (2026-08-12)
 
-**25. Integer division and remainder** have no spelling. Division itself is decided.
+**25. Confirm that `var:int 'q' = math { 10 / 4 }.` errors** rather than truncating. Recorded as
+INFERRED. Operators themselves are decided (`//`, `mod`).
 
 **26. Confirm the comparison family** — `!=`/`≠`, `<`, `>`, `<=`/`≤`, `>=`/`≥`. Equality itself is
 decided (`=` inside `math { }`).

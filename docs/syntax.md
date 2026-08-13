@@ -181,11 +181,19 @@ digit-lookahead rule.
 |---|---|---|
 | Multiply | `*`, `x` (spaced) | **DECIDED** |
 | Divide | `/`, `÷` | **DECIDED** |
+| Integer divide | `//` | **DECIDED** |
+| Remainder | `mod` | **DECIDED** |
 | Power | `^`, `**`, `xx` | **DECIDED** |
 | Add / subtract | `+`, `-` | **DECIDED** (implied throughout) |
 
-What division *produces* is a separate question — see [types.md](types.md). Integer division and
-remainder have no decided spelling.
+What division *produces* is a separate question — see [types.md](types.md).
+
+`%` was **rejected** for remainder: in mathematics it means *percent*, and a calculations language
+should keep it free for that. `mod` is the mathematical name anyway, and keywords cost nothing
+since names are quoted.
+
+**INFERRED:** `var:int 'q' = math { 10 / 4 }.` is an error rather than silently truncating to 2 —
+consistent with refusing information loss elsewhere. `//` is how truncation is requested.
 
 `×` was briefly a multiplication alias and was **removed** on 2026-08-10 — it now means cross
 product, below.
