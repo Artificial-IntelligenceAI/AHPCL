@@ -255,6 +255,40 @@ produce hundreds of notes. At ten lines apiece that is thousands of lines of out
 **PROPOSED, easy to add later:** `flag:informer = full` to expand notes into the structured
 error layout when investigating one specifically.
 
+## Timing — **DECIDED**
+
+Two separate timers.
+
+**The program's own runtime**, reported automatically when it finishes:
+
+```
+$ ./myprogram
+Mean: 4.667
+─────
+finished in 12.4ms
+```
+
+**The compiler's phases**, reported by the Informer:
+
+```
+informer: lexed 412 lines in 1.2ms
+informer: parsed in 3.8ms
+informer: type-checked in 9.1ms
+informer: compile-time evaluation took 21.4s of 24.1s total
+```
+
+Plus a **`clock[]` builtin** so a program can time its own sections — needed the moment "how fast
+is AHPCL" becomes "which part is slow".
+
+**Timing goes to stderr, program output to stdout.** Otherwise a stray timing line corrupts
+anything piped to a file or another tool.
+
+Wall-clock time is the headline figure — what people mean by "how long did it take". CPU time may
+be added later; it excludes waiting on disk, which starts to matter once file reading is involved.
+
+Delegated by Tankun ("whatever is best for you to debug"), so revisit freely — nothing depends on
+these choices.
+
 ## Runtime failure — **DECIDED**
 
 Runtime failures **stop the program**, reporting in the Error Handler's style.
