@@ -61,10 +61,6 @@ is actionable. Currently "What the heck am I supposed to do?", and it needs code
 
 **13. Indexing syntax.** Discussion used `(a)[(i)]`, which clashes with `[…]` for calls.
 
-**14g. Confirm the type hierarchy** — that `int` and `deci` are kinds of `num`, and `+int` a kind
-of `int`, so narrower types pass where wider ones are expected. Assumed throughout, never stated.
-Without it, one function per numeric type.
-
 **14c. Confirm `,` extends a `change:`** — recorded as INFERRED from the language-wide comma
 rule. Everything else about `change:` is decided.
 

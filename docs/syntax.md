@@ -806,10 +806,9 @@ calls, at the price of a heavier hello-world.
 bare, or are ordinary quoted functions. Each new one will re-raise it until a general rule is
 set.
 
-### Type nesting — **INFERRED, needs confirming**
+### Type nesting — **DECIDED**
 
-Assumed throughout but never stated: the numeric families nest, so a narrower type is accepted
-where a wider one is expected.
+The numeric families nest, and a narrower type is accepted where a wider one is expected.
 
 ```
         num
@@ -829,9 +828,18 @@ Narrower goes in fine, because it is a promise. The reverse does not: a function
 `+num` will not take a plain `num`, which might be negative.
 
 This is what lets one function serve several numeric types **without generics**. Generics would
-only be needed across genuinely unrelated types (a function accepting both `num` and `str`), which
-is why `print` looks like a builtin rather than an ordinary function. Not needed for numeric
-domains; deferred until a real case appears.
+only be needed across genuinely unrelated types (a function accepting both `num` and `str`).
+Not needed for numeric domains; deferred until a real case appears.
+
+**Every widening is reported** by the Informer:
+
+```
+informer: main.ahpcl:12:20 — 'w' passed as int where num expected; widened
+```
+
+Accepted cost: widening is common, so this will be one of the more frequent notes. Chosen
+deliberately over silent widening — consistent with the Informer reporting everything the
+compiler decides on your behalf.
 
 ### Functions producing nothing — **DECIDED**
 
