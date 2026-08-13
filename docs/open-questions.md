@@ -44,12 +44,9 @@ decided (`=` inside `math { }`).
 
 **3. Which Unicode symbols are aliases.** Mostly **blocked**: half the old "safe list" needs
 operations that do not exist. `≤ ≥ ≠ ÷` alias things that do exist. `∧ ∨ ¬` need boolean operators;
-`∈` needs sets; `π` and `∞` need constants; `√` needs square root; `≈` needs a tolerance rule.
-`∧ ∨ ¬` are now **decided** (see [syntax.md](syntax.md)).
+`∈` needs sets; `√` needs square root; `≈` needs a tolerance rule. `∧ ∨ ¬` are **decided**, and
+`π` `e` `τ` `∞num` are **decided** (see [syntax.md](syntax.md)).
 `· × ⊙ ⊗` are reserved operations, and `∘` is unassigned.
-
-**3b. The constant list** — `π`, `e`, `∞`, and their ASCII spellings. The mechanism is decided
-(bare keywords in `math { }`); the roster is not.
 
 **3c. Is there a square root**, and are there other maths builtins (`sin`, `log`, `abs`, `round`)?
 None exist. Relates to #6b, whether value-returning builtins are quoted.

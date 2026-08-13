@@ -10,7 +10,7 @@ See [README.md](README.md) for the status legend.
 | `rat` | Exact rationals — a numerator and a denominator, kept in lowest terms |
 | `deci` | Decimals (IEEE decimal formats) |
 | `int` | Integers |
-| `infnum` | Arbitrary precision — the bignum equivalent |
+| `infnum` / `∞num` | Arbitrary precision — the bignum equivalent. Both spellings legal |
 
 `rat` was added 2026-08-12, forced by division: `math { 1 / 3 }` has no exact decimal answer.
 Adding it widened `num` from "integers and decimals" to **any exact number**.

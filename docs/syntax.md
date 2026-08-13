@@ -243,7 +243,20 @@ Math mode already has bare keywords (`to`, `by`, `mod`, `and`), so this needs no
 Rejected: predefined variables (mutable, so `π` could be redefined) and no builtin constants
 (everyone writes their own π to a different number of digits, and `∞` has no expression at all).
 
-**OPEN:** the full list (`π`, `e`, `∞`, …), their ASCII spellings, and how precision is pinned.
+The roster — **DECIDED**:
+
+| Symbol | ASCII | Value |
+|---|---|---|
+| `π` | `pi` | 3.14159… |
+| `e` | `e` | 2.71828… — Euler's number |
+| `τ` | `tau` | 6.28318… — two π |
+
+How much of an irrational you get is set by `[n digits]` on the declaration — see
+[types.md](types.md).
+
+**`∞` is not a value.** It appears only in the type name `∞num`, the Unicode spelling of `infnum`.
+That keeps it out of arithmetic entirely, so the awkward cases (`∞ - ∞` is undefined, not zero)
+never arise, and it needs no type able to hold it.
 
 ### Boolean operators — **DECIDED**
 
