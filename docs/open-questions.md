@@ -34,8 +34,13 @@ decided.
 
 ## Gaps found by writing sample programs
 
-**31. Reading files.** `read["measurements.csv"]` appears throughout the docs as illustration and
-was never designed. Relates to #6b (are non-maths builtins bare or quoted?).
+**31. Text-to-number conversion.** `read` gives back a `str`; nothing turns text into numbers, so
+file input is only half-usable. Format-aware reading (CSV straight to a typed array) is a **later**
+addition.
+
+**32. Runtime failure has no story at all.** Converting `"hello"` to a number fails, a file may be
+missing, a runtime refinement check may trip — and AHPCL has no mechanism for any of it. Every
+error designed so far is a *compile* error.
 
 
 
@@ -63,8 +68,7 @@ a second parser). Note `\` is already the escape character.
 **6. Resolved** — `[…]` with space-separated arguments and no commas, for both `print` and user
 functions.
 
-**6b. Do non-maths builtins stay bare like `print`**, or become quoted functions? Maths operations
-are all operators now, so this only affects things like file reading.
+**6b. Resolved** — bare means builtin, quoted means user-defined.
 
 **7. Is juxtaposition-concatenation general** or specific to `print`? Does `(x)` interpolate in
 any string context?

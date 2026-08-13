@@ -1107,24 +1107,30 @@ not. Rejected: bare (`area[…]`), which re-creates the "bare when possible, quo
 that always-quoted references were introduced to remove; and reference-style (`('area')[…]`),
 which costs four characters on every call and implies an indirection that does not exist.
 
-**`print` stays bare** — **DECIDED**. It is a builtin *statement*, like `if` and `loop`, not an
-ordinary function:
+### Bare means builtin — **DECIDED**
+
+**A bare name is a builtin; a quoted name is user-defined.**
 
 ```
-print["Hello, World!"].
-'area'['3' '4'].
+print["Hello, World!"].     # builtin statement
+read["data.csv"]            # builtin function
+'area'['3' '4'].            # user function
 ```
 
-Tankun: "print is just print, man." It hands nothing back and is never used as an expression,
-which is statement behaviour.
+The two can never collide, because the syntax itself says which category you are in — someone may
+define their own `'read'` and both coexist unambiguously:
 
-Accepted cost: there are now two call shapes — bare for `print`, quoted for user functions — so a
-reader must know `print` is builtin. Rejected alternative was `'print'[…]`, uniform with all other
-calls, at the price of a heavier hello-world.
+```
+read["data.csv"]        # the builtin
+'read'["data.csv"]      # a user function called read
+```
 
-**OPEN:** whether future builtins (`read`, `sqrt`, `length`, `round`) follow `print` and stay
-bare, or are ordinary quoted functions. Each new one will re-raise it until a general rule is
-set.
+This is better than "statements bare, functions quoted", which would have needed a further rule
+about which builtins are which. Value-returning builtins (`read`) and value-less ones (`print`) are
+both bare.
+
+Accepted cost: a reader must know the builtin roster to know what a bare name does, and adding a
+builtin later gives meaning to a name that previously had none.
 
 ### Type nesting — **DECIDED**
 
