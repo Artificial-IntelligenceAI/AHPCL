@@ -269,9 +269,29 @@ Reaching a fixed point needs **two phases**, which is standard abstract interpre
 The loop condition is re-applied at the top of every round, which is what actually proves
 the countdown stays positive.
 
+**Width comes from every use, not the initialiser.** Verification runs two passes: the
+first gathers the range a variable takes across all its assignments, the second reports
+from it. Otherwise a counter declared `= '0'` and accumulated to 5050 would be inferred as
+8-bit.
+
+**"Not knowable at compile time" means *from input*.** A value flowing from `read`,
+`parse` or `clock` genuinely cannot be known, and requires a stated width. A function call
+or a selector has a range the analysis simply does not track — a limit of the analysis,
+not of the program — so those default to 64-bit and say so rather than erroring.
+
 **Width inference applies to `int` only.** A decimal's width is an IEEE *format* chosen
 for significant digits, not something derived from a value's range; rationals have no
 width at all. Inferring one from an integer range would be a category error.
+
+**Layer 3 is enforced by the interpreter and by generated code**, not merely announced.
+A refinement that cannot be proved is checked on every assignment, and a broken promise
+stops the program with `AHPCL-SIGN-0004`. An earlier build reported "runtime check
+inserted" and inserted nothing.
+
+**A refinement constrains the result, not each operand.** `math { 0 - 5 }` assigned to a
+`+int` is broken by its answer, not by the `0`; and `math { ('n') > 0 }` compares against
+an ordinary zero. Pinning the refinement onto operands made the documented idiom for
+keeping a `+int` positive unwritable.
 
 **A sign-only mismatch is not a type error.** The sign algebra is conservative —
 `+int - +int` widens to `int`, because `7 - 7` is 0 — so rejecting in the type checker

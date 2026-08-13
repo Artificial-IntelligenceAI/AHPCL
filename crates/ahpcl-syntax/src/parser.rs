@@ -382,6 +382,8 @@ impl Parser {
                 .then_some(())?;
             let ty = self.type_ref()?;
             let (var, var_span) = self.quoted_name("the loop counter")?;
+            // A counter may carry a precision, exactly as any other declaration does.
+            let _precision = self.optional_precision();
             self.expect(TokenKind::Equals, "'=' before the range", "write = math { 1 to 10 }.")
                 .then_some(())?;
             let range = self.expression()?;

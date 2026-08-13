@@ -172,6 +172,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             None,
         );
         self.module.add_function(
+            "ahpcl_print_bool",
+            self.context.void_type().fn_type(&[self.context.i8_type().into()], false),
+            None,
+        );
+        // Integer division goes through the runtime so it is Euclidean, matching the
+        // interpreter, and so division by zero fails instead of being undefined.
+        for name in ["ahpcl_int_div", "ahpcl_int_mod"] {
+            self.module
+                .add_function(name, i64t.fn_type(&[i64t.into(), i64t.into()], false), None);
+        }
+        self.module.add_function(
             "ahpcl_print_str",
             self.context.void_type().fn_type(&[i8ptr.into()], false),
             None,
@@ -460,6 +471,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                             let p = self.spill(v, "print.deci");
                             self.call_runtime("ahpcl_print_deci", &[p.into()]);
                         }
+                        Native::Bool => {
+                            let widened = self
+                                .builder
+                                .build_int_z_extend(
+                                    v.into_int_value(),
+                                    self.context.i8_type(),
+                                    "boolbyte",
+                                )
+                                .unwrap();
+                            self.call_runtime("ahpcl_print_bool", &[widened.into()]);
+                        }
                         _ => {
                             self.call_runtime("ahpcl_print_int", &[v.into()]);
                         }
@@ -700,6 +722,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(loaded)
             }
             ExprKind::Unary { op, operand } => match op {
+                UnOp::Neg | UnOp::Abs
+                    if self.value_repr(operand) == Native::Deci || want == Native::Deci =>
+                {
+                    // Decimals have no machine negate; fall back rather than panicking
+                    // on an unexpected value kind.
+                    Err(Unsupported::new("negation or absolute value on a decimal"))
+                }
                 UnOp::Neg => {
                     let v = self.expr(operand, Native::Int)?.into_int_value();
                     Ok(self.builder.build_int_neg(v, "neg").unwrap().into())
@@ -798,8 +827,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Add => self.builder.build_int_add(a, b, "add").unwrap(),
             Sub => self.builder.build_int_sub(a, b, "sub").unwrap(),
             Mul => self.builder.build_int_mul(a, b, "mul").unwrap(),
-            IntDiv => self.builder.build_int_signed_div(a, b, "idiv").unwrap(),
-            Mod => self.builder.build_int_signed_rem(a, b, "mod").unwrap(),
+            IntDiv | Mod => {
+                let name = if op == IntDiv { "ahpcl_int_div" } else { "ahpcl_int_mod" };
+                return self
+                    .call_runtime(name, &[a.into(), b.into()])
+                    .ok_or_else(|| Unsupported::new("integer division"));
+            }
             Pow => return self.int_pow(a, b),
             Div => {
                 return Err(Unsupported::new(

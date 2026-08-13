@@ -8,3 +8,8 @@ license.workspace = true
 ahpcl-diagnostics.workspace = true
 ahpcl-syntax.workspace = true
 inkwell = { version = "0.10", features = ["llvm22-1"] }
+
+# Generated code links against the runtime, so the tests need it built. Declaring it
+# here is what makes cargo produce the staticlib before the tests run.
+[dev-dependencies]
+ahpcl-runtime.workspace = true

@@ -351,7 +351,18 @@ impl<'a> Checker<'a> {
                 }
             }
             ExprKind::Ref { name, selectors } => self.reference(name, selectors, e.span),
-            ExprKind::Math(inner) => self.expr(inner, expected),
+            ExprKind::Math(inner) => {
+                let t = self.expr(inner, expected)?;
+                // A bare array reference sums, including when it is the whole
+                // expression — `math { ('areas') }` is the sum, not the array.
+                if is_bare_ref(inner) && t.is_array() {
+                    let scalar_wanted = expected.map(|e| !e.is_array()).unwrap_or(true);
+                    if scalar_wanted {
+                        return Some(t.element());
+                    }
+                }
+                Some(t)
+            }
             ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, e.span, expected),
             ExprKind::Unary { op, operand } => self.unary(*op, operand, e.span, expected),
             ExprKind::Call { name, args } => self.call(name, args, e.span),
@@ -577,9 +588,21 @@ impl<'a> Checker<'a> {
             return Some(want);
         }
 
-        let operand_expectation = if comparison { None } else { expected };
+        // A refinement constrains the *result*, not each operand. `math { 0 - 5 }`
+        // assigned to a +int is broken by its answer, not by the `0` — and deciding
+        // that is verification's job, not the type checker's.
+        let unrefined = expected.map(|t| Type { sign: None, ..t.clone() });
+        let operand_expectation = if comparison { None } else { unrefined.as_ref() };
         let a = self.expr(lhs, operand_expectation);
-        let b = self.expr(rhs, operand_expectation.or(a.as_ref()));
+        // A comparison bound is an ordinary number, not a member of the refined type.
+        // Pinning `0` to `+int` in `math { ('n') > 0 }` would reject the very idiom
+        // used to keep a +int positive.
+        let b_expectation = if comparison {
+            a.as_ref().map(|t| Type { sign: None, precision: None, ..t.clone() })
+        } else {
+            operand_expectation.cloned().or_else(|| a.clone())
+        };
+        let b = self.expr(rhs, b_expectation.as_ref());
 
         // Rule A: a *bare* array reference sums, so it is scalar here. One carrying a
         // selector stays an array, and the operation runs elementwise.
@@ -653,7 +676,10 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            IntDiv | Mod => Base::Int,
+            // `//` truncates to a whole number; `mod` keeps the operand's kind, so
+            // 2.5 mod 2 is 0.5 rather than an int holding a fraction.
+            IntDiv => Base::Int,
+            Mod => a_elem.base.join(b_elem.base)?,
             _ => a_elem.base.join(b_elem.base)?,
         };
 
@@ -800,7 +826,10 @@ impl<'a> Checker<'a> {
                 Some(Type { sign: sign_neg(t.sign), ..t })
             }
             UnOp::Floor | UnOp::Ceil => {
-                let t = self.expr(operand, None)?;
+                // The operand still needs pinning, or a bare number in it is reported
+                // as ambiguous.
+                let want = Type::scalar(Base::Deci);
+                let t = self.expr(operand, Some(&want))?;
                 Some(Type::scalar(if t.base.is_numeric() { Base::Int } else { t.base }))
             }
             UnOp::Abs => {
@@ -1156,11 +1185,21 @@ impl<'a> Checker<'a> {
 /// The range a width holds. A `+int` cannot be negative, so the sign bit is free —
 /// which is where unsigned ranges come from without a separate `uint` family.
 fn int_range(bits: u32, sign: Option<Sign>) -> (i128, i128) {
-    let width = bits.min(127);
+    // Guard the shifts: `1i128 << 127` overflows, so the widest cases are named
+    // outright rather than computed.
+    let unsigned_max = |w: u32| -> i128 {
+        if w >= 127 { i128::MAX } else { (1i128 << w) - 1 }
+    };
+    let signed_max = |w: u32| -> i128 {
+        if w >= 128 { i128::MAX } else { (1i128 << (w - 1)) - 1 }
+    };
+    let signed_min = |w: u32| -> i128 {
+        if w >= 128 { i128::MIN } else { -(1i128 << (w - 1)) }
+    };
     match sign {
-        Some(Sign::Positive) => (1, (1i128 << width) - 1),
-        Some(Sign::Negative) => (-((1i128 << width) - 1), -1),
-        None => (-(1i128 << (width - 1)), (1i128 << (width - 1)) - 1),
+        Some(Sign::Positive) => (1, unsigned_max(bits)),
+        Some(Sign::Negative) => (-unsigned_max(bits), -1),
+        None => (signed_min(bits), signed_max(bits)),
     }
 }
 

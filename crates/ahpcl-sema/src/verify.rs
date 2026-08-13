@@ -69,7 +69,17 @@ pub fn verify(program: &Program, informer: &mut Informer, budget: EvalBudget) ->
         budget,
         program,
         quiet: false,
+        all_uses: Default::default(),
+        declared: Default::default(),
     };
+
+    // Pass one gathers the range each variable takes across every assignment; pass two
+    // reports from it. One pass would judge a width from the initialiser alone.
+    v.quiet = true;
+    let mut scratch = State::default();
+    v.block(&program.statements, &mut scratch);
+    v.quiet = false;
+
     let mut state = State::default();
     v.block(&program.statements, &mut state);
     Verified { errors: v.errors, runtime_checks: v.runtime_checks }
@@ -84,6 +94,15 @@ struct Verifier<'a> {
     /// Reaching a fixed point means walking the body several times. Findings are
     /// suppressed during those rounds and reported once, from the converged state.
     quiet: bool,
+    /// The union of every value a variable takes anywhere in scope.
+    ///
+    /// "Range analysis looks at *all* uses, not just the initialiser" — so a width is
+    /// inferred from this, not from the declaration alone. Without it, a counter
+    /// declared `= '0'` and accumulated to 5050 would be inferred as 8-bit.
+    all_uses: std::collections::HashMap<String, Interval>,
+    /// Where each variable was declared and with what type, so a later `change:` can be
+    /// checked against the same promise.
+    declared: std::collections::HashMap<String, (TypeRef, Option<Precision>, Span)>,
 }
 
 impl<'a> Verifier<'a> {
@@ -103,15 +122,25 @@ impl<'a> Verifier<'a> {
                         .map(|e| self.range_of(e, state))
                         .unwrap_or(Interval::UNKNOWN);
                     state.set(&b.name, range);
+                    self.record_use(&b.name, range);
+                    self.declared.insert(
+                        b.name.clone(),
+                        (v.ty.clone(), b.precision.clone(), b.name_span),
+                    );
                     self.check_sign(&v.ty, &b.name, range, b.name_span);
-                    self.check_precision(&v.ty, b, range);
+                    let across_all_uses = self.all_uses.get(&b.name).copied().unwrap_or(range);
+                    self.check_precision(&v.ty, b, across_all_uses);
                 }
             }
             Stmt::Change(c) => {
                 for target in &c.targets {
                     let range = self.range_of(&target.value, state);
                     state.set(&target.name, range);
+                    self.record_use(&target.name, range);
                     self.check_sign(&c.ty, &target.name, range, target.name_span);
+                    // A stated width is a promise about range, so a later change has to
+                    // keep it — not only the initialiser.
+                    self.check_stated_width(&target.name, range, target.name_span);
                 }
             }
             Stmt::Func(f) => {
@@ -148,6 +177,40 @@ impl<'a> Verifier<'a> {
                 for a in args {
                     self.range_of(a, state);
                 }
+            }
+        }
+    }
+
+    fn record_use(&mut self, name: &str, range: Interval) {
+        let merged = match self.all_uses.get(name) {
+            Some(prev) => prev.join(range),
+            None => range,
+        };
+        self.all_uses.insert(name.to_string(), merged);
+    }
+
+    /// Check a range against the width the variable was declared with.
+    fn check_stated_width(&mut self, name: &str, range: Interval, span: Span) {
+        if self.quiet {
+            return;
+        }
+        let Some((ty, precision, _)) = self.declared.get(name).cloned() else { return };
+        let Some(Precision::Bits(bits)) = precision else { return };
+        if ty.base != "int" {
+            return;
+        }
+        if let (Some(lo), Some(hi)) = (range.lo, range.hi) {
+            let (min, max) = width_range(bits, ty.sign);
+            if lo < min || hi > max {
+                self.errors.push(Error::new(
+                    E_OVERFLOW,
+                    span,
+                    format!(
+                        "'{name}' reaches {}, which does not fit in [{bits} bit] — that holds [{min}, {max}].",
+                        range.render()
+                    ),
+                    "widen the type, or use infnum.",
+                ));
             }
         }
     }
@@ -292,6 +355,10 @@ impl<'a> Verifier<'a> {
                 t.parse::<i128>().map(Interval::exact).unwrap_or(Interval::UNKNOWN)
             }
             ExprKind::Ref { name, selectors } if selectors.is_empty() => state.get(name),
+            // Selecting from an array, or a conditional used for its value, produces a
+            // number whose range is not tracked — but it *is* knowable at compile time,
+            // so demanding a stated width would be wrong.
+            ExprKind::Ref { .. } => Interval::UNKNOWN,
             ExprKind::Unary { op: UnOp::Neg, operand } => self.range_of(operand, state).neg(),
             ExprKind::Binary { op, lhs, rhs } => {
                 let a = self.range_of(lhs, state);
@@ -341,6 +408,12 @@ impl<'a> Verifier<'a> {
                     format!("declare it :{} instead.", ty.base),
                 ));
             }
+            return;
+        }
+
+        // An empty range means the branch is unreachable, so there is nothing to
+        // prove and nothing worth saying.
+        if range.is_empty() {
             return;
         }
 
@@ -465,16 +538,34 @@ impl<'a> Verifier<'a> {
                 }
             }
             _ => {
-                // Not knowable at compile time.
-                self.errors.push(Error::new(
-                    E_PRECISION_UNKNOWABLE,
-                    binding.name_span,
-                    format!(
-                        "'{}' has a value that is not knowable at compile time, so no width can be inferred.",
-                        binding.name
-                    ),
-                    "state a precision, as in [32 bit], or use infnum which is unbounded.",
-                ));
+                // Only a value flowing from *input* is genuinely unknowable. A function
+                // call or a selector has a range the analysis simply does not track —
+                // which is a limit of the analysis, not of the program, so demanding a
+                // width there would punish ordinary code.
+                let from_input = binding
+                    .value
+                    .as_ref()
+                    .map(|e| derives_from_input(e))
+                    .unwrap_or(false);
+                if from_input {
+                    self.errors.push(Error::new(
+                        E_PRECISION_UNKNOWABLE,
+                        binding.name_span,
+                        format!(
+                            "'{}' comes from input, so its value is not knowable at compile time and no width can be inferred.",
+                            binding.name
+                        ),
+                        "state a precision, as in [32 bit], or use infnum which is unbounded.",
+                    ));
+                } else {
+                    self.informer.say(
+                        binding.name_span.start,
+                        format!(
+                            "'{}' has no statically known range; defaulting to [64 bit]",
+                            binding.name
+                        ),
+                    );
+                }
             }
         }
     }
@@ -524,6 +615,20 @@ fn bare_name(e: &Expr) -> Option<&str> {
     }
 }
 
+/// Whether a value flows from input — `read`, `parse` or `clock`.
+///
+/// This is the honest reading of "not knowable at compile time". A function call is
+/// knowable in principle; a file's contents are not.
+fn derives_from_input(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Builtin { name, .. } => matches!(name.as_str(), "read" | "parse" | "clock"),
+        ExprKind::Math(inner) => derives_from_input(inner),
+        ExprKind::Binary { lhs, rhs, .. } => derives_from_input(lhs) || derives_from_input(rhs),
+        ExprKind::Unary { operand, .. } => derives_from_input(operand),
+        _ => false,
+    }
+}
+
 /// The range a parameter starts with, from its declared refinement.
 fn sign_range(ty: &TypeRef) -> Interval {
     match ty.sign {
@@ -535,11 +640,21 @@ fn sign_range(ty: &TypeRef) -> Interval {
 
 /// What a width holds. A `+int` cannot be negative, so the sign bit is free.
 fn width_range(bits: u32, sign: Option<Sign>) -> (i128, i128) {
-    let w = bits.min(127);
+    // Guard the shifts: `1i128 << 127` overflows, so the widest cases are named
+    // outright rather than computed.
+    let unsigned_max = |w: u32| -> i128 {
+        if w >= 127 { i128::MAX } else { (1i128 << w) - 1 }
+    };
+    let signed_max = |w: u32| -> i128 {
+        if w >= 128 { i128::MAX } else { (1i128 << (w - 1)) - 1 }
+    };
+    let signed_min = |w: u32| -> i128 {
+        if w >= 128 { i128::MIN } else { -(1i128 << (w - 1)) }
+    };
     match sign {
-        Some(Sign::Positive) => (1, (1i128 << w) - 1),
-        Some(Sign::Negative) => (-((1i128 << w) - 1), -1),
-        None => (-(1i128 << (w - 1)), (1i128 << (w - 1)) - 1),
+        Some(Sign::Positive) => (1, unsigned_max(bits)),
+        Some(Sign::Negative) => (-unsigned_max(bits), -1),
+        None => (signed_min(bits), signed_max(bits)),
     }
 }
 

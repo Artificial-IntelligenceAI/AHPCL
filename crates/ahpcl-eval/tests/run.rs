@@ -575,3 +575,75 @@ fn a_declared_decimal_width_limits_the_digits() {
         "1.4142135"
     );
 }
+
+// ── regressions from the second stress-testing pass (2026-08-12) ────────────
+
+#[test]
+fn a_broken_refinement_actually_stops_the_program() {
+    // Layer 3 previously announced a runtime check and inserted nothing, so a +int
+    // could hold a negative number and the program ran to completion.
+    std::fs::create_dir_all("/tmp/ahpcl-regress").ok();
+    std::fs::write("/tmp/ahpcl-regress/neg.txt", "-7").unwrap();
+    assert_eq!(
+        fails(
+            "var:str 'raw' = read[\"/tmp/ahpcl-regress/neg.txt\"].\n\
+             var:+int 'n' [32 bit] = parse[('raw')].\n\
+             print[('n')]."
+        ),
+        "AHPCL-SIGN-0004"
+    );
+}
+
+#[test]
+fn a_stated_width_is_enforced_while_running() {
+    assert_eq!(
+        fails("var:int 'x' [8 bit] = '100'.\nprint[('x')].".replace("100", "1000").as_str()),
+        "AHPCL-PREC-0004"
+    );
+}
+
+#[test]
+fn a_refined_value_can_be_compared_against_zero() {
+    // `math { ('n') > 0 }` on a +int was rejected, which made the documented idiom
+    // for keeping a +int positive unwritable.
+    assert_eq!(
+        one("var:+int 'n' [32 bit] = '5'.\n\
+             var:bool 'b' = math { ('n') > 0 }.\n\
+             print[('b')]."),
+        "true"
+    );
+}
+
+#[test]
+fn a_lone_bare_array_reference_sums() {
+    assert_eq!(
+        one("var:vector:deci 'a' [3] = {'1.5','2.5','3.0'}.\n\
+             var:deci 't' = math { ('a') }.\n\
+             print[('t')]."),
+        "7"
+    );
+}
+
+#[test]
+fn floor_and_ceil_pin_a_bare_literal() {
+    assert_eq!(one("var:int 'h' [32 bit] = math { floor 5 }.\nprint[('h')]."), "5");
+    assert_eq!(one("var:int 'h' [32 bit] = math { ceil 5 }.\nprint[('h')]."), "5");
+}
+
+#[test]
+fn mod_on_a_decimal_keeps_the_fraction() {
+    assert_eq!(
+        one("var:deci 'a' [64 bit] = '2.5'.\n\
+             var:deci 'm' [64 bit] = math { ('a') mod 2 }.\n\
+             print[('m')]."),
+        "0.5"
+    );
+}
+
+#[test]
+fn a_loop_counter_may_carry_a_precision() {
+    assert_eq!(
+        one("loop:var:int 'i' [32 bit] = math { 1 to 3 } { print[('i')]. }."),
+        "1\n2\n3"
+    );
+}

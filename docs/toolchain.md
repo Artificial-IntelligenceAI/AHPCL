@@ -83,6 +83,14 @@ passing, while the AArch64 C ABI passes a 24-byte struct indirectly. The two dis
 to 8; an `i128` requires 16, and Rust's `#[repr(C)]` layout assumes it. Reading across the
 mismatch is undefined behaviour that works in release and aborts under debug assertions.
 
+**Integer division and remainder go through the runtime.** LLVM's `sdiv`/`srem` truncate
+toward zero while the interpreter is Euclidean, so `-7 // 3` was -2 natively and -3
+interpreted. Routing through the runtime also makes division by zero fail rather than
+being undefined.
+
+**Booleans print as `true`/`false`**, matching the literals and the interpreter, rather
+than as 0/1.
+
 **Output is flushed on every write.** A compiled program's entry point is LLVM's C `main`,
 not Rust's, so Rust's flush-on-exit never runs and buffered output would be lost.
 

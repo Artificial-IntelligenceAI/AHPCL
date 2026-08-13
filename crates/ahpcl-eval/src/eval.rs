@@ -22,6 +22,7 @@ const E_OVERFLOW: Code = Code::new(Category::Prec, 4);
 const E_DIV_ZERO: Code = Code::new(Category::Run, 2);
 const E_BOUNDS: Code = Code::new(Category::Run, 3);
 const E_PARSE: Code = Code::new(Category::Run, 4);
+const E_SIGN_BROKEN: Code = Code::new(Category::Sign, 4);
 
 /// How a block finished.
 enum Flow {
@@ -94,6 +95,69 @@ impl<'a> Interpreter<'a> {
             "summing this array overflowed the value's precision.",
             "widen the element type, or use infnum.",
         )
+    }
+
+    /// The runtime half of layer 3.
+    ///
+    /// Verification decides whether a refinement can be *proved*; when it cannot, the
+    /// promise still has to hold, so it is checked here. Without this the compiler
+    /// would announce a check it never performed.
+    fn check_refinement(
+        &self,
+        ty: &TypeRef,
+        name: &str,
+        value: &Value,
+        span: Span,
+    ) -> Result<(), Error> {
+        let Some(sign) = ty.sign else { return Ok(()) };
+        let Some(n) = numeric_sign(value) else { return Ok(()) };
+
+        let ok = match sign {
+            Sign::Positive => n > 0,
+            Sign::Negative => n < 0,
+        };
+        if ok {
+            return Ok(());
+        }
+        let word = match sign {
+            Sign::Positive => "strictly positive",
+            Sign::Negative => "strictly negative",
+        };
+        Err(self.err(
+            E_SIGN_BROKEN,
+            span,
+            format!("'{name}' is {value}, but its type promises it is {word}."),
+            format!(
+                "declare it :{} instead, or keep the value {word}.",
+                ty.base
+            ),
+        ))
+    }
+
+    /// A stated width is a promise about range, so it is enforced while running.
+    fn check_width(
+        &self,
+        ty: &TypeRef,
+        precision: Option<&Precision>,
+        name: &str,
+        value: &Value,
+        span: Span,
+    ) -> Result<(), Error> {
+        let Some(Precision::Bits(bits)) = precision else { return Ok(()) };
+        if ty.base != "int" {
+            return Ok(());
+        }
+        let Value::Int(v) = value else { return Ok(()) };
+        let (lo, hi) = int_width_range(*bits, ty.sign);
+        if *v < lo || *v > hi {
+            return Err(self.err(
+                E_OVERFLOW,
+                span,
+                format!("'{name}' is {v}, which does not fit in [{bits} bit] — that holds {lo} to {hi}."),
+                "widen the type, or use infnum.",
+            ));
+        }
+        Ok(())
     }
 
     fn not_a_number(&self, v: &Value, span: Span) -> Error {
@@ -175,6 +239,8 @@ impl<'a> Interpreter<'a> {
                         } else {
                             val
                         };
+                        self.check_refinement(&v.ty, &b.name, &val, b.name_span)?;
+                        self.check_width(&v.ty, b.precision.as_ref(), &b.name, &val, b.name_span)?;
                         self.define(&b.name, val);
                     } else {
                         self.define(&b.name, Value::Nothing);
@@ -187,6 +253,7 @@ impl<'a> Interpreter<'a> {
                 for target in &c.targets {
                     let val = self.expr(&target.value, hint)?;
                     if target.selectors.is_empty() {
+                        self.check_refinement(&c.ty, &target.name, &val, target.name_span)?;
                         self.assign(&target.name, val);
                     } else {
                         self.assign_element(c, target, val)?;
@@ -1652,3 +1719,34 @@ fn flat_index(shape: &[usize], indices: &[usize]) -> Option<usize> {
     }
     Some(offset)
 }
+
+/// The sign of a numeric value: -1, 0 or 1. `None` for non-numbers.
+fn numeric_sign(v: &Value) -> Option<i32> {
+    match v {
+        Value::Int(n) => Some(if *n > 0 { 1 } else if *n < 0 { -1 } else { 0 }),
+        Value::Deci(d) => Some(if d.mantissa > 0 { 1 } else if d.mantissa < 0 { -1 } else { 0 }),
+        Value::Rat(r) => Some(if r.num > 0 { 1 } else if r.num < 0 { -1 } else { 0 }),
+        _ => None,
+    }
+}
+
+/// What a width holds. A `+int` cannot be negative, so the sign bit is free.
+fn int_width_range(bits: u32, sign: Option<Sign>) -> (i128, i128) {
+    // Guard the shifts: `1i128 << 127` overflows, so the widest cases are named
+    // outright rather than computed.
+    let unsigned_max = |w: u32| -> i128 {
+        if w >= 127 { i128::MAX } else { (1i128 << w) - 1 }
+    };
+    let signed_max = |w: u32| -> i128 {
+        if w >= 128 { i128::MAX } else { (1i128 << (w - 1)) - 1 }
+    };
+    let signed_min = |w: u32| -> i128 {
+        if w >= 128 { i128::MIN } else { -(1i128 << (w - 1)) }
+    };
+    match sign {
+        Some(Sign::Positive) => (1, unsigned_max(bits)),
+        Some(Sign::Negative) => (-unsigned_max(bits), -1),
+        None => (signed_min(bits), signed_max(bits)),
+    }
+}
+

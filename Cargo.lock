@@ -16,6 +16,7 @@ name = "ahpcl-codegen"
 version = "0.1.0"
 dependencies = [
  "ahpcl-diagnostics",
+ "ahpcl-runtime",
  "ahpcl-syntax",
  "inkwell",
 ]

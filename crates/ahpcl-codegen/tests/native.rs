@@ -276,3 +276,37 @@ fn an_int_widens_into_a_decimal_context() {
         "3.5"
     );
 }
+
+// ── native and interpreter must agree ───────────────────────────────────────
+
+#[test]
+fn integer_division_is_euclidean_natively() {
+    // LLVM's sdiv truncates toward zero; the interpreter is Euclidean. They disagreed
+    // on every negative operand until division went through the runtime.
+    assert_eq!(
+        compile_and_run(
+            "eucl",
+            "var:int 'a' [32 bit] = math { 0 - 7 }.\n\
+             var:int 'b' [32 bit] = '3'.\n\
+             var:int 'q' [32 bit] = math { ('a') // ('b') }.\n\
+             var:int 'r' [32 bit] = math { ('a') mod ('b') }.\n\
+             print[('q')].\nprint[('r')]."
+        ),
+        "-3\n2"
+    );
+}
+
+#[test]
+fn booleans_print_as_words_natively() {
+    assert_eq!(
+        compile_and_run("boolp", "var:bool 'a' = 'true'.\nprint[('a')]."),
+        "true"
+    );
+}
+
+#[test]
+fn negating_a_decimal_falls_back_rather_than_panicking() {
+    // This used to panic in the compiler with "expected the IntValue variant".
+    let what = declines("var:deci 'a' [64 bit] = '2.5'.\nvar:deci 'n' [64 bit] = math { -('a') }.");
+    assert!(!what.is_empty(), "{what}");
+}

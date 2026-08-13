@@ -174,6 +174,33 @@ pub extern "C" fn ahpcl_print_int(v: i64) {
     emit(&v.to_string());
 }
 
+/// Booleans print as `true`/`false`, matching the literals and the interpreter.
+#[no_mangle]
+pub extern "C" fn ahpcl_print_bool(v: i8) {
+    emit(if v != 0 { "true" } else { "false" });
+}
+
+/// Euclidean division, matching the interpreter.
+///
+/// LLVM's `sdiv`/`srem` truncate toward zero, so `-7 // 3` would be -2 natively and -3
+/// interpreted. Euclidean is the one the language specifies, and a remainder that is
+/// never negative is the more useful of the two.
+#[no_mangle]
+pub extern "C" fn ahpcl_int_div(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        unsafe { ahpcl_fail(c"AHPCL-RUN-0002".as_ptr(), c"division by zero.".as_ptr()) }
+    }
+    a.div_euclid(b)
+}
+
+#[no_mangle]
+pub extern "C" fn ahpcl_int_mod(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        unsafe { ahpcl_fail(c"AHPCL-RUN-0002".as_ptr(), c"remainder by zero.".as_ptr()) }
+    }
+    a.rem_euclid(b)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_print_str(p: *const c_char) {
     if p.is_null() {
@@ -281,6 +308,18 @@ mod tests {
     fn overflow_is_flagged_rather_than_wrapping() {
         assert_eq!(add(d(i128::MAX, 0), d(1, 0)).failed, 1);
         assert_eq!(mul(d(i128::MAX, 0), d(2, 0)).failed, 1);
+    }
+
+    #[test]
+    fn integer_division_is_euclidean_in_native_code_too() {
+        // LLVM's sdiv truncates: -7/3 would be -2. Euclidean gives -3, and a
+        // remainder that is never negative.
+        assert_eq!(ahpcl_int_div(-7, 3), -3);
+        assert_eq!(ahpcl_int_mod(-7, 3), 2);
+        assert_eq!(ahpcl_int_div(-7, -3), 3);
+        assert_eq!(ahpcl_int_mod(-7, -3), 2);
+        assert_eq!(ahpcl_int_div(7, 3), 2);
+        assert_eq!(ahpcl_int_mod(7, 3), 1);
     }
 
     #[test]
