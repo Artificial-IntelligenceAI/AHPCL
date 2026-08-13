@@ -34,9 +34,10 @@ decided.
 
 ## Gaps found by writing a sample program (2026-08-12)
 
-**25. What does division produce?** Spelling is decided (`/`, `÷`). `math { 1 / 3 }` has no exact
-decimal answer, so this is what forces `rat` off the deferred list. Integer division and remainder
-also have no spelling.
+**25. Integer division and remainder** have no spelling. Division itself is decided.
+
+**25b. Where does `rat` sit in the type hierarchy?** It now exists, but its relationship to `int`,
+`deci` and `num` is unstated.
 
 **26. Equality.** `=` already means assignment, so `math { ('i') = 3 }` conflicts. `>` and `<`
 appear in examples; equality, inequality, `>=` and `<=` have no decided spelling.
@@ -81,8 +82,8 @@ rule. Everything else about `change:` is decided.
 
 ## Types
 
-**15. `float` and `rat`** — deferred by Tankun, but both are wanted by the stated domains. Type
-names not chosen.
+**15. `float`** — still deferred. Wanted by the scientific domain for speed; `rat` was added
+2026-08-12.
 
 **16. Review the sign algebra** table in [types.md](types.md) — derived, not dictated.
 

@@ -9,7 +9,10 @@ See [README.md](README.md) for the status legend.
 | `num` | Integers and decimals, negative and positive, **including 0** |
 | `int` | Integers |
 | `deci` | Decimals (IEEE decimal formats) |
+| `rat` | Exact rationals — a numerator and a denominator, kept in lowest terms |
 | `infnum` | Arbitrary precision — the bignum equivalent |
+
+`rat` was added 2026-08-12, forced by division: `math { 1 / 3 }` has no exact decimal answer.
 
 ## Sign refinement — **DECIDED**
 
@@ -390,12 +393,29 @@ allow types that take neither.
 kinds, whether `nna` has a rank at all, and whether the summing rule makes bare `('names')`
 concatenate.
 
+## Division — **DECIDED**
+
+What `/` produces is **decided by context**, and ambiguity is an error — the same rule already
+used for numeric literals, applied a second time rather than inventing a new one:
+
+```
+var:rat  'third' = math { 1 / 3 }.      # exactly one third
+var:deci 'half'  = math { 10 / 4 }.     # 2.5
+var:num  'what'  = math { 1 / 3 }.      # ERROR: rat or deci?
+```
+
+Exactness is available without being forced on ordinary arithmetic.
+
+Rejected: always-rational (`10 / 4` giving `5/2` when `2.5` was wanted, forcing constant
+conversion) and always-decimal (`1 / 3` silently losing information, which the exact/symbolic
+domain exists to avoid).
+
+**OPEN:** integer division and remainder have no spelling.
+
 ## Deferred types — **DECIDED to defer**
 
 - **`float`** — binary IEEE floating point. Absent so far. It is what makes numerical
   computing fast, since GPUs and SIMD units speak it natively; exact decimals are correct but
   much slower. Matters for the scientific domain.
-- **`rat`** — exact rationals. `deci` cannot represent ⅓ (`0.333…` never terminates in base
-  10), so exact fraction maths needs numerator/denominator. Matters for the symbolic domain.
 
-Sign prefixes are expected to extend to both.
+Sign prefixes are expected to extend to it.
