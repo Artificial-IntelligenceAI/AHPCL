@@ -44,6 +44,13 @@ pub struct Interpreter<'a> {
     /// when evaluating at compile time.
     steps: u64,
     step_limit: Option<u64>,
+    /// What each enclosing `handback` is handing back *to*: a function's declared
+    /// return type, or the type the surrounding conditional or loop is filling.
+    ///
+    /// Without it, `func:rat 'half' […] { hb math { ('x') / '2' }. }` divides on the
+    /// decimal path and hands back 0.5 where the declared `rat` asks for 1/2 —
+    /// division follows the context, and the return type is the context.
+    return_hints: Vec<Option<Numeric>>,
 }
 
 /// Run a whole program.
@@ -66,6 +73,7 @@ impl<'a> Interpreter<'a> {
             lines: Vec::new(),
             steps: 0,
             step_limit: None,
+            return_hints: Vec::new(),
         }
     }
 
@@ -277,7 +285,8 @@ impl<'a> Interpreter<'a> {
                 Ok(Flow::Normal)
             }
             Stmt::Handback { value, .. } => {
-                let v = self.expr(value, None)?;
+                let hint = self.return_hints.last().copied().flatten();
+                let v = self.expr(value, hint)?;
                 Ok(Flow::Handback(v))
             }
             Stmt::Expr(e) => {
@@ -511,12 +520,22 @@ impl<'a> Interpreter<'a> {
                 }
                 Ok(Value::Array(Array { items: values, shape }))
             }
-            ExprKind::If(chain) => match self.if_chain(chain)? {
-                Flow::Handback(v) => Ok(v),
-                Flow::Normal => Ok(Value::Nothing),
-            },
+            ExprKind::If(chain) => {
+                // A conditional used as a value hands back to whatever is being
+                // filled, so that is the hint its arms see.
+                self.return_hints.push(hint);
+                let flow = self.if_chain(chain);
+                self.return_hints.pop();
+                match flow? {
+                    Flow::Handback(v) => Ok(v),
+                    Flow::Normal => Ok(Value::Nothing),
+                }
+            }
             ExprKind::Loop(l) => {
-                let items = self.loop_stmt(l)?;
+                self.return_hints.push(hint);
+                let items = self.loop_stmt(l);
+                self.return_hints.pop();
+                let items = items?;
                 // Nesting builds higher rank: an inner loop handing back a vector
                 // makes the outer one a matrix.
                 let outer = items.len();
@@ -585,7 +604,9 @@ impl<'a> Interpreter<'a> {
         for (param, value) in func.params.iter().zip(values) {
             self.define(&param.name, value);
         }
+        self.return_hints.push(numeric_hint(&func.returns));
         let flow = self.block(&func.body);
+        self.return_hints.pop();
         self.scopes.pop();
 
         match flow? {

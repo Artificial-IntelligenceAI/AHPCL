@@ -12,21 +12,32 @@ fn workdir() -> PathBuf {
     dir
 }
 
-/// The compiled runtime staticlib. Generated code calls into it for exact decimals,
-/// so a produced binary will not link without it.
+/// The compiled runtime staticlib. Generated code calls into it for every value that
+/// is not a machine word, so a produced binary will not link without it.
+///
+/// It is built here rather than assumed: a dev-dependency links the *rlib*, so the
+/// staticlib can sit stale on disk while the crate itself is up to date. That stale
+/// copy fails as undefined symbols at link time, a long way from the cause.
 fn runtime_library() -> PathBuf {
+    static BUILT: std::sync::Once = std::sync::Once::new();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
         .expect("the workspace root")
         .to_path_buf();
-    for profile in ["debug", "release"] {
-        let candidate = root.join("target").join(profile).join("libahpcl_runtime.a");
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    panic!("build ahpcl-runtime first: cargo build -p ahpcl-runtime");
+
+    BUILT.call_once(|| {
+        let status = Command::new(env!("CARGO"))
+            .args(["build", "--quiet", "-p", "ahpcl-runtime"])
+            .current_dir(&root)
+            .status()
+            .expect("cargo should run");
+        assert!(status.success(), "the runtime staticlib should build");
+    });
+
+    let candidate = root.join("target").join("debug").join("libahpcl_runtime.a");
+    assert!(candidate.exists(), "expected {}", candidate.display());
+    candidate
 }
 
 /// Compile, link and run, returning stdout.
@@ -199,24 +210,188 @@ fn text_and_values_print_together() {
 // ── what the backend declines, and why ──────────────────────────────────────
 
 #[test]
-fn text_values_are_declined() {
-    // Strings as values need heap management in the runtime, which is a later stage.
-    let what = declines("var:str 's' = \"hello\".\nprint[('s')].");
-    assert!(!what.is_empty(), "{what}");
+fn a_conditional_used_as_a_value_compiles() {
+    assert_eq!(
+        compile_and_run(
+            "ifval",
+            "var:int 'r' = if math { 1 > 0 } { hb '1'. }, else { hb '2'. }.\nprint[('r')]."
+        ),
+        "1"
+    );
 }
 
 #[test]
-fn arrays_are_declined() {
-    let what = declines("var:vector:int 'a' [3] = {'1','2','3'}.\nprint[('a')].");
-    assert!(what.contains("array"), "{what}");
+fn a_loop_used_as_a_value_collects_its_handbacks() {
+    assert_eq!(
+        compile_and_run(
+            "loopval",
+            "var:vector:int 'squares' = loop:var:int 'i' = math { 1 to 4 } {\n\
+                 handback math { ('i') x ('i') }.\n\
+             }.\n\
+             print[('squares')]."
+        ),
+        "{1, 4, 9, 16}"
+    );
+}
+
+// ── text in native code ─────────────────────────────────────────────────────
+
+#[test]
+fn text_values_compile() {
+    assert_eq!(
+        compile_and_run("textval", "var:str 's' = \"hello\".\nprint[('s')]."),
+        "hello"
+    );
 }
 
 #[test]
-fn integer_division_producing_a_fraction_is_declined() {
-    // 1/3 between two *integers* has no integer result, and the decimal path needs
-    // decimal operands.
-    let what = declines("var:deci 'r' = math { 1 / 3 }.\nprint[('r')].");
-    assert!(!what.is_empty());
+fn text_comparison_compiles() {
+    assert_eq!(
+        compile_and_run(
+            "textcmp",
+            "var:str 'a' = \"Alice\".\n\
+             var:bool 'same' = math { ('a') = \"Alice\" }.\n\
+             var:bool 'after' = math { ('a') > \"Bob\" }.\n\
+             print[('same')].\nprint[('after')]."
+        ),
+        "true\nfalse"
+    );
+}
+
+#[test]
+fn parsing_compiles_with_its_options() {
+    assert_eq!(
+        compile_and_run(
+            "parseopt",
+            "var:int 'n' [32 bit] = parse[\"1,234\" group:\",\"].\n\
+             var:deci 'd' [64 bit] = parse[\"  3.25  \" trim].\n\
+             var:int 'h' [32 bit] = parse[\"0xff\" hex].\n\
+             print[('n')].\nprint[('d')].\nprint[('h')]."
+        ),
+        "1234\n3.25\n255"
+    );
+}
+
+// ── exact rationals in native code ──────────────────────────────────────────
+
+#[test]
+fn rationals_are_exact_in_native_code() {
+    // The guarantee that binary floating point cannot make: three thirds is one.
+    assert_eq!(
+        compile_and_run(
+            "ratexact",
+            "var:rat 'a' = math { 1 / 3 }.\n\
+             var:rat 'b' = math { ('a') + ('a') + ('a') }.\n\
+             print[('a')].\nprint[('b')]."
+        ),
+        "1/3\n1"
+    );
+}
+
+#[test]
+fn rationals_reduce_natively() {
+    assert_eq!(
+        compile_and_run(
+            "ratreduce",
+            "var:rat 'r' [64 bit] = parse[\"2/6\"].\nprint[('r')]."
+        ),
+        "1/3"
+    );
+}
+
+#[test]
+fn infnum_compiles_and_stays_exact() {
+    assert_eq!(
+        compile_and_run(
+            "infexact",
+            "var:infnum 'x' = '1.1'.\n\
+             var:infnum 'y' = math { ('x') x ('x') }.\n\
+             print[('y')]."
+        ),
+        "1.21"
+    );
+}
+
+#[test]
+fn division_between_integers_compiles_into_a_decimal() {
+    // 1/3 has no integer result, so the decimal path takes it and keeps the digits.
+    assert_eq!(
+        compile_and_run("intdivdeci", "var:deci 'r' = math { 1 / 3 }.\nprint[('r')]."),
+        "0.333333333333333"
+    );
+}
+
+// ── arrays in native code ───────────────────────────────────────────────────
+
+#[test]
+fn arrays_compile_and_print_like_the_interpreter() {
+    assert_eq!(
+        compile_and_run(
+            "arrlit",
+            "var:vector:int 'a' [3] = {'1','2','3'}.\nprint[('a')]."
+        ),
+        "{1, 2, 3}"
+    );
+}
+
+#[test]
+fn the_array_operators_compile() {
+    let src = "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+               var:vector:int 'b' [3] = {'4','5','6'}.\n\
+               var:int 'd' [64 bit] = math { ('a') · ('b') }.\n\
+               var:vector:int 'h' [3] = math { ('a') ⊙ ('b') }.\n\
+               var:vector:int 'c' [3] = math { ('a') × ('b') }.\n\
+               print[('d')].\nprint[('h')].\nprint[('c')].";
+    assert_eq!(compile_and_run("arrops", src), "32\n{4, 10, 18}\n{-3, 6, -3}");
+}
+
+#[test]
+fn array_selectors_compile() {
+    let src = "var:vector:int 'a' [5] = {'10','20','30','40','50'}.\n\
+               var:int 'n' [64 bit] = ('a'):length;.\n\
+               var:int 'third' [64 bit] = ('a'):3;.\n\
+               var:vector:int 'odd' [3] = ('a'):1 to 5 by 2;.\n\
+               print[('n')].\nprint[('third')].\nprint[('odd')].";
+    assert_eq!(compile_and_run("arrsel", src), "5\n30\n{10, 30, 50}");
+}
+
+#[test]
+fn writing_to_an_array_element_compiles() {
+    let src = "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+               change:var:int 'a':2; = '99'.\n\
+               print[('a')].";
+    assert_eq!(compile_and_run("arrset", src), "{1, 99, 3}");
+}
+
+#[test]
+fn arrays_of_decimals_stay_exact_natively() {
+    // `:all;` keeps both sides arrays, so the addition is elementwise. A *bare*
+    // reference would sum instead — Rule A — which the next test pins down.
+    let src = "var:vector:deci 'a' [2] = {'0.1','0.2'}.\n\
+               var:vector:deci 'b' [2] = {'0.2','0.1'}.\n\
+               var:vector:deci 's' [2] = math { ('a'):all; + ('b'):all; }.\n\
+               print[('s')].";
+    assert_eq!(compile_and_run("arrdeci", src), "{0.3, 0.3}");
+}
+
+#[test]
+fn a_bare_array_reference_sums_natively() {
+    // Rule A, and the reason the native backend cannot treat every array operand as
+    // elementwise: a bare reference reduces to the total of its elements.
+    let src = "var:vector:deci 'a' [2] = {'0.1','0.2'}.\n\
+               var:vector:deci 'b' [2] = {'0.2','0.1'}.\n\
+               var:deci 's' = math { ('a') + ('b') }.\n\
+               print[('s')].";
+    assert_eq!(compile_and_run("arrsum", src), "0.6");
+}
+
+#[test]
+fn matrix_multiplication_compiles() {
+    let src = "var:matrix:int 'a' [2, 2] = {{'1','2'},{'3','4'}}.\n\
+               var:matrix:int 'b' [2, 2] = {{'5','6'},{'7','8'}}.\n\
+               var:matrix:int 'p' [2, 2] = math { ('a') · ('b') }.\n\
+               print[('p')].";
+    assert_eq!(compile_and_run("matmul", src), "{19, 22, 43, 50}");
 }
 
 // ── exact decimals in native code ───────────────────────────────────────────
@@ -305,8 +480,86 @@ fn booleans_print_as_words_natively() {
 }
 
 #[test]
-fn negating_a_decimal_falls_back_rather_than_panicking() {
-    // This used to panic in the compiler with "expected the IntValue variant".
-    let what = declines("var:deci 'a' [64 bit] = '2.5'.\nvar:deci 'n' [64 bit] = math { -('a') }.");
-    assert!(!what.is_empty(), "{what}");
+fn negating_a_decimal_compiles_rather_than_panicking() {
+    // This used to panic in the compiler with "expected the IntValue variant", then
+    // declined for a while; now it goes through the runtime and gives the answer.
+    assert_eq!(
+        compile_and_run(
+            "decineg",
+            "var:deci 'a' [64 bit] = '2.5'.\n\
+             var:deci 'n' [64 bit] = math { -('a') }.\n\
+             print[('n')]."
+        ),
+        "-2.5"
+    );
+}
+
+#[test]
+fn square_root_is_exact_natively() {
+    assert_eq!(
+        compile_and_run(
+            "sqrtnat",
+            "var:deci 'r' = math { sqrt '2' }.\nprint[('r')]."
+        ),
+        "1.414213562373095"
+    );
+}
+
+#[test]
+fn the_constants_compile_to_their_declared_precision() {
+    assert_eq!(
+        compile_and_run(
+            "constants",
+            "var:deci 'a' [10 digits] = math { pi }.\n\
+             var:deci 'b' [5 digits] = math { e }.\n\
+             print[('a')].\nprint[('b')]."
+        ),
+        "3.1415926536\n2.71828"
+    );
+}
+
+#[test]
+fn powers_of_exact_values_compile() {
+    // 1.1^20 went wrong from the thirteenth digit through f64; this is the exact answer.
+    assert_eq!(
+        compile_and_run(
+            "exactpow",
+            "var:deci 'a' = '1.1'.\n\
+             var:deci 'b' = math { ('a') xx 20 }.\n\
+             var:rat 'r' = math { 1 / 3 }.\n\
+             var:rat 'c' = math { ('r') xx 3 }.\n\
+             print[('b')].\nprint[('c')]."
+        ),
+        "6.72749994932560009201\n1/27"
+    );
+}
+
+#[test]
+fn decimal_division_and_remainder_are_euclidean_natively() {
+    // The same rule integers follow, so a negative operand does not split the two
+    // implementations apart.
+    assert_eq!(
+        compile_and_run(
+            "decieucl",
+            "var:deci 'a' = '-7.5'.\n\
+             var:deci 'b' = '2'.\n\
+             var:int 'q' [32 bit] = math { ('a') // ('b') }.\n\
+             var:deci 'r' = math { ('a') mod ('b') }.\n\
+             print[('q')].\nprint[('r')]."
+        ),
+        "-4\n0.5"
+    );
+}
+
+#[test]
+fn text_and_bool_arrays_compile() {
+    assert_eq!(
+        compile_and_run(
+            "arrmixed",
+            "var:vector:str 's' [3] = {\"a\",\"b\",\"c\"}.\n\
+             var:vector:bool 'b' [2] = {'true','false'}.\n\
+             print[('s')].\nprint[('b')].\nprint[('s'):2;]."
+        ),
+        "{a, b, c}\n{true, false}\nb"
+    );
 }

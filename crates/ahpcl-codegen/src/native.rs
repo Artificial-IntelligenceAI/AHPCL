@@ -45,6 +45,10 @@ pub fn compile(program: &Program, object_path: &Path, module_name: &str) -> Resu
         functions: HashMap::new(),
         var_types: Vec::new(),
         fn_repr: HashMap::new(),
+        fn_params: HashMap::new(),
+        current_ret: Native::None,
+        handbacks: Vec::new(),
+        digits: DEFAULT_DIGITS,
         current: None,
         string_count: 0,
     };
@@ -98,6 +102,18 @@ struct Codegen<'ctx, 'a> {
     /// right path.
     var_types: Vec<HashMap<String, Native>>,
     fn_repr: HashMap<String, Native>,
+    /// The declared representation of each parameter, so a call passes the right thing.
+    /// Reading it back off the LLVM type cannot work: several representations share one
+    /// LLVM type, and a pointer where a struct belongs is a crash, not an error.
+    fn_params: HashMap<String, Vec<Native>>,
+    /// What the function being compiled hands back.
+    current_ret: Native,
+    /// Where `handback` should put its value. A function returns; a conditional used as
+    /// a value stores into a slot; a loop used as a value appends to an array.
+    handbacks: Vec<Handback<'ctx>>,
+    /// How many places to compute an irrational to, from the declaration in hand.
+    /// `[36 digits]` on a `var:deci` sets it for that declaration's value.
+    digits: u32,
     current: Option<FunctionValue<'ctx>>,
     string_count: usize,
 }
@@ -132,6 +148,112 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         )
     }
 
+    /// The exact-rational layout: numerator, denominator, failed.
+    fn rat_type(&self) -> inkwell::types::StructType<'ctx> {
+        self.context.struct_type(
+            &[
+                self.context.i128_type().into(),
+                self.context.i128_type().into(),
+                self.i64().into(),
+            ],
+            false,
+        )
+    }
+
+    /// The LLVM type behind a native representation.
+    fn repr_type(&self, n: Native) -> inkwell::types::BasicTypeEnum<'ctx> {
+        match n {
+            Native::Bool => self.bool_type().into(),
+            Native::Deci => self.deci_type().into(),
+            Native::Rat => self.rat_type().into(),
+            Native::Str => self.str_type().into(),
+            Native::Array(_) | Native::Num => self.ptr().into(),
+            _ => self.i64().into(),
+        }
+    }
+
+    /// A stack buffer of `count` slots, for passing small lists to the runtime.
+    fn alloca_array(
+        &self,
+        name: &str,
+        ty: inkwell::types::BasicTypeEnum<'ctx>,
+        count: usize,
+    ) -> inkwell::values::PointerValue<'ctx> {
+        let entry = self
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_parent())
+            .and_then(|f| f.get_first_basic_block())
+            .expect("a function to allocate in");
+        let scratch = self.context.create_builder();
+        match entry.get_first_instruction() {
+            Some(i) => scratch.position_before(&i),
+            None => scratch.position_at_end(entry),
+        }
+        let n = self.context.i64_type().const_int(count.max(1) as u64, false);
+        let slot = scratch.build_array_alloca(ty, n, name).unwrap();
+        if let Some(instruction) = slot.as_instruction() {
+            // i128 needs 16-byte alignment; LLVM would otherwise pick 8 and the
+            // program would work only by luck.
+            let _ = instruction.set_alignment(16);
+        }
+        slot
+    }
+
+    fn ptr(&self) -> inkwell::types::PointerType<'ctx> {
+        self.context.ptr_type(inkwell::AddressSpace::default())
+    }
+
+    /// The text layout: a pointer into constant data or the heap, plus a byte length.
+    fn str_type(&self) -> inkwell::types::StructType<'ctx> {
+        self.context.struct_type(
+            &[
+                self.context.ptr_type(inkwell::AddressSpace::default()).into(),
+                self.i64().into(),
+            ],
+            false,
+        )
+    }
+
+    /// A string literal as a `{ptr, len}` value pointing at constant data.
+    fn str_value(&mut self, text: &str) -> BasicValueEnum<'ctx> {
+        let global = self.global_string(text);
+        let len = self.i64().const_int(text.len() as u64, false);
+        let mut v = self.str_type().get_undef();
+        v = self
+            .builder
+            .build_insert_value(v, global, 0, "str.ptr")
+            .unwrap()
+            .into_struct_value();
+        v = self
+            .builder
+            .build_insert_value(v, len, 1, "str.len")
+            .unwrap()
+            .into_struct_value();
+        v.into()
+    }
+
+    fn rat_const(&self, num: i128, den: i128) -> BasicValueEnum<'ctx> {
+        let word = |v: i128| {
+            let lo = (v as u128 & u64::MAX as u128) as u64;
+            let hi = ((v as u128) >> 64) as u64;
+            self.context.i128_type().const_int_arbitrary_precision(&[lo, hi])
+        };
+        self.rat_type()
+            .const_named_struct(&[word(num).into(), word(den).into(), self.i64().const_zero().into()])
+            .into()
+    }
+
+    /// Call a runtime function that writes a rational through an out-pointer.
+    fn call_rat(&self, name: &str, args: &[BasicMetadataValueEnum<'ctx>]) -> Option<BasicValueEnum<'ctx>> {
+        let out = self.alloca("rt.rout", self.rat_type().into());
+        let mut all: Vec<BasicMetadataValueEnum<'ctx>> = vec![out.into()];
+        all.extend_from_slice(args);
+        let f = self.module.get_function(name)?;
+        self.builder.build_call(f, &all, "rt").unwrap();
+        Some(self.builder.build_load(self.rat_type(), out, "rt.rval").unwrap())
+    }
+
     /// Declare the runtime.
     ///
     /// Decimals cross the boundary **by pointer**. LLVM IR performs no platform ABI
@@ -147,6 +269,188 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
         for name in ["ahpcl_deci_add", "ahpcl_deci_sub", "ahpcl_deci_mul"] {
             let ty = void.fn_type(&[p.into(), p.into(), p.into()], false);
+            self.module.add_function(name, ty, None);
+        }
+        self.module.add_function(
+            "ahpcl_deci_binary",
+            void.fn_type(&[p.into(), i32t.into(), p.into(), p.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_rat_binary",
+            void.fn_type(&[p.into(), i32t.into(), p.into(), p.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_deci_int_div",
+            i64t.fn_type(&[p.into(), p.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_constant",
+            void.fn_type(&[p.into(), i32t.into(), i32t.into()], false),
+            None,
+        );
+        for name in ["ahpcl_rat_add", "ahpcl_rat_sub", "ahpcl_rat_mul", "ahpcl_rat_div"] {
+            let ty = void.fn_type(&[p.into(), p.into(), p.into()], false);
+            self.module.add_function(name, ty, None);
+        }
+        self.module
+            .add_function("ahpcl_rat_from_int", void.fn_type(&[p.into(), i64t.into()], false), None);
+        self.module
+            .add_function("ahpcl_rat_cmp", i32t.fn_type(&[p.into(), p.into()], false), None);
+        self.module
+            .add_function("ahpcl_print_rat", void.fn_type(&[p.into()], false), None);
+        self.module
+            .add_function("ahpcl_print_text", void.fn_type(&[p.into()], false), None);
+        self.module
+            .add_function("ahpcl_str_cmp", i32t.fn_type(&[p.into(), p.into()], false), None);
+        self.module
+            .add_function("ahpcl_read_line", void.fn_type(&[p.into()], false), None);
+        self.module.add_function(
+            "ahpcl_parse_int",
+            i64t.fn_type(&[p.into(), i64t.into(), p.into(), p.into()], false),
+            None,
+        );
+        let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+        let u32t = self.context.i32_type();
+        let i8t_early = self.context.i8_type();
+        self.module
+            .add_function("ahpcl_num_from_int", ptr.fn_type(&[i64t.into()], false), None);
+        self.module
+            .add_function("ahpcl_num_from_bool", ptr.fn_type(&[i8t_early.into()], false), None);
+        for name in ["ahpcl_num_from_deci", "ahpcl_num_from_rat"] {
+            self.module
+                .add_function(name, ptr.fn_type(&[p.into()], false), None);
+        }
+        self.module.add_function(
+            "ahpcl_num_binary",
+            ptr.fn_type(&[u32t.into(), p.into(), p.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_num_unary",
+            ptr.fn_type(&[u32t.into(), p.into(), u32t.into()], false),
+            None,
+        );
+        self.module
+            .add_function("ahpcl_num_cmp", i32t.fn_type(&[p.into(), p.into()], false), None);
+        self.module
+            .add_function("ahpcl_print_num", void.fn_type(&[p.into()], false), None);
+        self.module
+            .add_function("ahpcl_num_to_int", i64t.fn_type(&[p.into()], false), None);
+        for name in ["ahpcl_num_to_deci", "ahpcl_num_to_rat"] {
+            self.module
+                .add_function(name, void.fn_type(&[p.into(), p.into()], false), None);
+        }
+        self.module.add_function(
+            "ahpcl_deci_unary",
+            void.fn_type(&[p.into(), u32t.into(), p.into(), u32t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_rat_unary",
+            void.fn_type(&[p.into(), u32t.into(), p.into(), u32t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_array_new",
+            ptr.fn_type(&[u32t.into(), u32t.into(), p.into()], false),
+            None,
+        );
+        self.module
+            .add_function("ahpcl_array_len", i64t.fn_type(&[p.into()], false), None);
+        self.module
+            .add_function("ahpcl_array_kind", u32t.fn_type(&[p.into()], false), None);
+        self.module
+            .add_function("ahpcl_array_shape", ptr.fn_type(&[p.into()], false), None);
+        self.module
+            .add_function("ahpcl_array_sum", ptr.fn_type(&[p.into()], false), None);
+        self.module
+            .add_function("ahpcl_array_empty", ptr.fn_type(&[u32t.into()], false), None);
+        self.module
+            .add_function("ahpcl_array_push_int", void.fn_type(&[p.into(), i64t.into()], false), None);
+        self.module.add_function(
+            "ahpcl_array_push_bool",
+            void.fn_type(&[p.into(), i8t_early.into()], false),
+            None,
+        );
+        for name in [
+            "ahpcl_array_push_deci",
+            "ahpcl_array_push_rat",
+            "ahpcl_array_push_str",
+            "ahpcl_array_push_num",
+        ] {
+            self.module
+                .add_function(name, void.fn_type(&[p.into(), p.into()], false), None);
+        }
+        self.module
+            .add_function("ahpcl_print_array", void.fn_type(&[p.into()], false), None);
+        self.module.add_function(
+            "ahpcl_array_select",
+            ptr.fn_type(&[p.into(), p.into(), i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_array_range",
+            ptr.fn_type(&[p.into(), i64t.into(), i64t.into(), i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_array_elementwise",
+            ptr.fn_type(&[u32t.into(), p.into(), p.into()], false),
+            None,
+        );
+        for name in [
+            "ahpcl_array_hadamard",
+            "ahpcl_array_dot",
+            "ahpcl_array_cross",
+            "ahpcl_array_tensor",
+        ] {
+            self.module
+                .add_function(name, ptr.fn_type(&[p.into(), p.into()], false), None);
+        }
+        self.module.add_function(
+            "ahpcl_array_set_int",
+            void.fn_type(&[p.into(), i64t.into(), i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_array_get_int",
+            i64t.fn_type(&[p.into(), i64t.into()], false),
+            None,
+        );
+        let i8t = self.context.i8_type();
+        self.module.add_function(
+            "ahpcl_array_set_bool",
+            void.fn_type(&[p.into(), i64t.into(), i8t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_array_get_bool",
+            i8t.fn_type(&[p.into(), i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_array_set_num",
+            void.fn_type(&[p.into(), i64t.into(), p.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_array_get_num",
+            ptr.fn_type(&[p.into(), i64t.into()], false),
+            None,
+        );
+        for name in ["ahpcl_array_set_deci", "ahpcl_array_set_rat", "ahpcl_array_set_str"] {
+            let ty = void.fn_type(&[p.into(), i64t.into(), p.into()], false);
+            self.module.add_function(name, ty, None);
+        }
+        for name in ["ahpcl_array_get_deci", "ahpcl_array_get_rat", "ahpcl_array_get_str"] {
+            let ty = void.fn_type(&[p.into(), p.into(), i64t.into()], false);
+            self.module.add_function(name, ty, None);
+        }
+        for name in ["ahpcl_parse_deci", "ahpcl_parse_rat"] {
+            let ty = void.fn_type(&[p.into(), p.into(), i64t.into(), p.into(), p.into()], false);
             self.module.add_function(name, ty, None);
         }
         self.module.add_function(
@@ -240,15 +544,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         for stmt in &program.statements {
             let Stmt::Func(f) = stmt else { continue };
             let ret_native = native_base(&f.returns)?;
+            let mut param_reprs = Vec::new();
             let mut params = Vec::new();
             for p in &f.params {
-                if p.shape.is_some() {
-                    return Err(Unsupported::new("array parameters"));
-                }
+                param_reprs.push(native_base(&p.ty)?);
                 params.push(match native_base(&p.ty)? {
                     Native::Int => self.i64().into(),
                     Native::Bool => self.bool_type().into(),
                     Native::Deci => self.deci_type().into(),
+                    Native::Rat => self.rat_type().into(),
+                    Native::Str => self.str_type().into(),
+                    Native::Array(_) | Native::Num => self.ptr().into(),
                     Native::None => return Err(Unsupported::new("a parameter of type none")),
                 });
             }
@@ -256,11 +562,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Native::Int => self.i64().fn_type(&params, false),
                 Native::Bool => self.bool_type().fn_type(&params, false),
                 Native::Deci => self.deci_type().fn_type(&params, false),
+                Native::Rat => self.rat_type().fn_type(&params, false),
+                Native::Str => self.str_type().fn_type(&params, false),
+                Native::Array(_) | Native::Num => self.ptr().fn_type(&params, false),
                 Native::None => self.context.void_type().fn_type(&params, false),
             };
             let value = self.module.add_function(&mangle(&f.name), fn_type, None);
             self.functions.insert(f.name.clone(), value);
             self.fn_repr.insert(f.name.clone(), ret_native);
+            self.fn_params.insert(f.name.clone(), param_reprs);
         }
         Ok(())
     }
@@ -270,6 +580,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let entry = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry);
         self.current = Some(function);
+        self.current_ret = native_base(&f.returns)?;
         self.vars.push(HashMap::new());
         self.var_types.push(HashMap::new());
 
@@ -301,6 +612,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Native::Deci => {
                     let zero = self.deci_const(0, 0);
                     self.builder.build_return(Some(&zero)).unwrap();
+                }
+                Native::Rat => {
+                    let zero = self.rat_const(0, 1);
+                    self.builder.build_return(Some(&zero)).unwrap();
+                }
+                Native::Str => {
+                    let empty = self.str_value("");
+                    self.builder.build_return(Some(&empty)).unwrap();
+                }
+                Native::Array(_) | Native::Num => {
+                    let null = self.ptr().const_null();
+                    self.builder.build_return(Some(&null)).unwrap();
                 }
             }
         }
@@ -392,9 +715,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Stmt::Var(v) => {
                 let native = native_base(&v.ty)?;
                 for b in &v.bindings {
-                    if b.shape.is_some() {
-                        return Err(Unsupported::new("arrays"));
-                    }
+                    // `[n digits]` says how much of an irrational this declaration
+                    // wants; it applies to the value being computed, then resets.
+                    self.digits = match b.precision.as_ref().or(v.ty.precision.as_ref()) {
+                        Some(Precision::Digits(n)) => *n,
+                        _ => DEFAULT_DIGITS,
+                    };
+                    // A shape on the binding is the declared size; the literal supplies
+                    // the elements, and the checker has already cross-checked the two.
                     let Some(value) = &b.value else {
                         return Err(Unsupported::new("a declaration with no value"));
                     };
@@ -403,19 +731,44 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_store(slot, val).unwrap();
                     self.vars.last_mut().unwrap().insert(b.name.clone(), slot);
                     self.var_types.last_mut().unwrap().insert(b.name.clone(), native);
+                    self.digits = DEFAULT_DIGITS;
                 }
                 Ok(false)
             }
             Stmt::Change(c) => {
                 let native = native_base(&c.ty)?;
                 for target in &c.targets {
-                    if !target.selectors.is_empty() {
-                        return Err(Unsupported::new("writing to an array element"));
-                    }
-                    let val = self.expr(&target.value, native)?;
                     let Some(slot) = self.lookup(&target.name) else {
                         return Err(Unsupported::new(format!("changing unknown '{}'", target.name)));
                     };
+                    let held = self
+                        .var_types
+                        .iter()
+                        .rev()
+                        .find_map(|f| f.get(&target.name).copied())
+                        .unwrap_or(native);
+
+                    // A selector on the left writes into the array rather than
+                    // replacing it.
+                    if !target.selectors.is_empty() {
+                        if !held.is_array() {
+                            return Err(Unsupported::new("a selector on a value that is not an array"));
+                        }
+                        let [Selector::Indices(ix)] = &target.selectors[..] else {
+                            return Err(Unsupported::new("this form of element assignment"));
+                        };
+                        let [index] = &ix[..] else {
+                            return Err(Unsupported::new("writing to several elements at once"));
+                        };
+                        let elem = held.element();
+                        let array = self.builder.build_load(self.ptr(), slot, "arr").unwrap();
+                        let i = self.expr(index, Native::Int)?;
+                        let val = self.expr(&target.value, elem)?;
+                        self.array_store_at(array, i, val, elem);
+                        continue;
+                    }
+
+                    let val = self.expr(&target.value, held)?;
                     self.builder.build_store(slot, val).unwrap();
                 }
                 Ok(false)
@@ -430,18 +783,57 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(false)
             }
             Stmt::Handback { value, .. } => {
+                // Inside a conditional or loop used as a value, `handback` contributes
+                // to that value rather than leaving the function.
+                match self.handbacks.last().copied() {
+                    Some(Handback::Store(slot, repr, merge)) => {
+                        let v = self.expr(value, repr)?;
+                        self.builder.build_store(slot, v).unwrap();
+                        self.builder.build_unconditional_branch(merge).unwrap();
+                        return Ok(true);
+                    }
+                    Some(Handback::Push(array, elem)) => {
+                        let v = self.expr(value, elem)?;
+                        let name = match elem {
+                            Native::Bool => "ahpcl_array_push_bool",
+                            Native::Deci => "ahpcl_array_push_deci",
+                            Native::Rat => "ahpcl_array_push_rat",
+                            Native::Str => "ahpcl_array_push_str",
+                            Native::Num => "ahpcl_array_push_num",
+                            _ => "ahpcl_array_push_int",
+                        };
+                        match elem {
+                            Native::Deci | Native::Rat | Native::Str => {
+                                let p = self.spill(v, "push");
+                                self.call_runtime(name, &[array.into(), p.into()]);
+                            }
+                            Native::Bool => {
+                                let byte = self
+                                    .builder
+                                    .build_int_z_extend(
+                                        v.into_int_value(),
+                                        self.context.i8_type(),
+                                        "push.b",
+                                    )
+                                    .unwrap();
+                                self.call_runtime(name, &[array.into(), byte.into()]);
+                            }
+                            _ => {
+                                self.call_runtime(name, &[array.into(), v.into()]);
+                            }
+                        }
+                        return Ok(false);
+                    }
+                    None => {}
+                }
                 let function = self.current.expect("inside a function");
                 let ret = function.get_type().get_return_type();
                 match ret {
                     None => {
                         self.builder.build_return(None).unwrap();
                     }
-                    Some(t) => {
-                        let native = if t.is_int_type() && t.into_int_type().get_bit_width() == 1 {
-                            Native::Bool
-                        } else {
-                            Native::Int
-                        };
+                    Some(_) => {
+                        let native = self.current_ret;
                         let v = self.expr(value, native)?;
                         self.builder.build_return(Some(&v)).unwrap();
                     }
@@ -462,6 +854,19 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     let text = self.global_string(s);
                     self.call_runtime("ahpcl_print_str", &[text.into()]);
                 }
+                _ if self.value_repr(arg) == Native::Num => {
+                    let v = self.expr(arg, Native::Num)?;
+                    self.call_runtime("ahpcl_print_num", &[v.into()]);
+                }
+                _ if self.value_repr(arg).is_array() => {
+                    let v = self.expr(arg, self.value_repr(arg))?;
+                    self.call_runtime("ahpcl_print_array", &[v.into()]);
+                }
+                _ if self.value_repr(arg) == Native::Str => {
+                    let v = self.expr(arg, Native::Str)?;
+                    let p = self.spill(v, "print.text");
+                    self.call_runtime("ahpcl_print_text", &[p.into()]);
+                }
                 _ => {
                     // Print through the runtime so a decimal keeps its exact digits.
                     let want = self.value_repr(arg);
@@ -470,6 +875,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         Native::Deci => {
                             let p = self.spill(v, "print.deci");
                             self.call_runtime("ahpcl_print_deci", &[p.into()]);
+                        }
+                        Native::Rat => {
+                            let p = self.spill(v, "print.rat");
+                            self.call_runtime("ahpcl_print_rat", &[p.into()]);
                         }
                         Native::Bool => {
                             let widened = self
@@ -496,16 +905,60 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// Which representation an expression naturally produces.
     fn value_repr(&self, e: &Expr) -> Native {
         match &e.kind {
-            ExprKind::Ref { name, .. } => self
-                .var_types
-                .iter()
-                .rev()
-                .find_map(|f| f.get(name).copied())
-                .unwrap_or(Native::Int),
+            ExprKind::Ref { name, selectors } => {
+                let held = self
+                    .var_types
+                    .iter()
+                    .rev()
+                    .find_map(|f| f.get(name).copied())
+                    .unwrap_or(Native::Int);
+                // Selectors change what comes out: `:length;` is a count, and a single
+                // index reads one element rather than handing back an array.
+                match selectors.last() {
+                    Some(Selector::Length) => Native::Int,
+                    Some(Selector::Indices(ix)) if ix.len() == 1 => held.element(),
+                    _ => held,
+                }
+            }
             ExprKind::Math(inner) => self.value_repr(inner),
             ExprKind::Number(t) | ExprKind::Literal(t) if t.contains('.') => Native::Deci,
-            ExprKind::Binary { lhs, rhs, .. } => {
-                if self.value_repr(lhs) == Native::Deci || self.value_repr(rhs) == Native::Deci {
+            ExprKind::Constant(_) => Native::Deci,
+            ExprKind::Unary { op, operand } => match op {
+                // A square root is a decimal even from a whole number; rounding gives
+                // a whole number whatever went in; `not` is a bool.
+                UnOp::Sqrt => Native::Deci,
+                UnOp::Floor | UnOp::Ceil => Native::Int,
+                UnOp::Not => Native::Bool,
+                _ => self.value_repr(operand),
+            },
+            ExprKind::Str(_) => Native::Str,
+            ExprKind::Builtin { name, .. } if name == "read" => Native::Str,
+            ExprKind::ArrayLit(_) => Native::Array(0),
+            ExprKind::Loop(_) => Native::Array(5),
+            ExprKind::Binary { op, lhs, rhs } => {
+                let (l, r) = (self.value_repr(lhs), self.value_repr(rhs));
+                // A dot product of two vectors collapses to a single value.
+                if *op == BinOp::Dot && l.is_array() && r.is_array() {
+                    return l.element();
+                }
+                // Rule A: a bare array reference sums, so the result is a num.
+                let implies_all = matches!(
+                    op,
+                    BinOp::Dot | BinOp::Cross | BinOp::Hadamard | BinOp::Tensor
+                );
+                if !implies_all
+                    && ((is_bare_ref(lhs) && l.is_array()) || (is_bare_ref(rhs) && r.is_array()))
+                {
+                    return Native::Num;
+                }
+                if l.is_array() || r.is_array() {
+                    return if l.is_array() { l } else { r };
+                }
+                if l == Native::Num || r == Native::Num {
+                    Native::Num
+                } else if l == Native::Rat || r == Native::Rat {
+                    Native::Rat
+                } else if l == Native::Deci || r == Native::Deci {
                     Native::Deci
                 } else {
                     Native::Int
@@ -685,6 +1138,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 if text == "false" {
                     return Ok(self.bool_type().const_zero().into());
                 }
+                // A `num` holds a tagged value, so a literal has to be boxed as
+                // whichever exact kind it is written as.
+                if want == Native::Num {
+                    let held = if text.contains('.') { Native::Deci } else { Native::Int };
+                    let v = self.expr(e, held)?;
+                    return self.convert(v, held, Native::Num);
+                }
+                if want == Native::Rat {
+                    let (mantissa, scale) = decimal_parts(text)
+                        .ok_or_else(|| Unsupported::new(format!("the literal '{text}'")))?;
+                    let den = 10i128.checked_pow(scale)
+                        .ok_or_else(|| Unsupported::new("a rational literal that large"))?;
+                    return Ok(self.rat_const(mantissa, den));
+                }
                 if text.contains('.') || want == Native::Deci {
                     let (mantissa, scale) = decimal_parts(text)
                         .ok_or_else(|| Unsupported::new(format!("the literal '{text}'")))?;
@@ -696,9 +1163,6 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(self.i64().const_int(n as u64, true).into())
             }
             ExprKind::Ref { name, selectors } => {
-                if !selectors.is_empty() {
-                    return Err(Unsupported::new("selectors"));
-                }
                 let Some(slot) = self.lookup(name) else {
                     return Err(Unsupported::new(format!("the variable '{name}'")));
                 };
@@ -708,47 +1172,46 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .rev()
                     .find_map(|f| f.get(name).copied())
                     .unwrap_or(want);
-                let loaded = match held {
-                    Native::Bool => self.builder.build_load(self.bool_type(), slot, name).unwrap(),
-                    Native::Deci => self.builder.build_load(self.deci_type(), slot, name).unwrap(),
-                    _ => self.builder.build_load(self.i64(), slot, name).unwrap(),
-                };
-                // An int flowing into a decimal context is widened by the runtime.
-                if want == Native::Deci && held != Native::Deci {
+                let loaded = self
+                    .builder
+                    .build_load(self.repr_type(held), slot, name)
+                    .unwrap();
+                if held.is_array() {
+                    return self.array_selectors(loaded, selectors, held.element(), want);
+                }
+                if !selectors.is_empty() {
+                    return Err(Unsupported::new("selectors on a value that is not an array"));
+                }
+                // An int flowing into an exact context is widened by the runtime.
+                if want == Native::Deci && held == Native::Int {
                     return self
                         .call_deci("ahpcl_deci_from_int", &[loaded.into()])
                         .ok_or_else(|| Unsupported::new("widening an int to a decimal"));
                 }
+                if want == Native::Rat && held == Native::Int {
+                    return self
+                        .call_rat("ahpcl_rat_from_int", &[loaded.into()])
+                        .ok_or_else(|| Unsupported::new("widening an int to a rational"));
+                }
+                if want != held {
+                    return self.convert(loaded, held, want);
+                }
                 Ok(loaded)
             }
             ExprKind::Unary { op, operand } => match op {
-                UnOp::Neg | UnOp::Abs
-                    if self.value_repr(operand) == Native::Deci || want == Native::Deci =>
-                {
-                    // Decimals have no machine negate; fall back rather than panicking
-                    // on an unexpected value kind.
-                    Err(Unsupported::new("negation or absolute value on a decimal"))
-                }
-                UnOp::Neg => {
-                    let v = self.expr(operand, Native::Int)?.into_int_value();
-                    Ok(self.builder.build_int_neg(v, "neg").unwrap().into())
+                // Exact values have no machine negate or square root, so these go
+                // through the runtime — the same code the interpreter's results come
+                // from, so the digits agree rather than merely being close.
+                UnOp::Neg | UnOp::Abs | UnOp::Sqrt | UnOp::Floor | UnOp::Ceil => {
+                    self.unary_exact(*op, operand, want)
                 }
                 UnOp::Not => {
                     let v = self.expr(operand, Native::Bool)?.into_int_value();
                     Ok(self.builder.build_not(v, "not").unwrap().into())
                 }
-                UnOp::Abs => {
-                    let v = self.expr(operand, Native::Int)?.into_int_value();
-                    let neg = self.builder.build_int_neg(v, "neg").unwrap();
-                    let is_neg = self
-                        .builder
-                        .build_int_compare(IntPredicate::SLT, v, self.i64().const_zero(), "isneg")
-                        .unwrap();
-                    Ok(self.builder.build_select(is_neg, neg, v, "abs").unwrap())
-                }
                 other => Err(Unsupported::new(format!("the operator {other:?}"))),
             },
-            ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs),
+            ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, want),
             ExprKind::Call { name, args } => {
                 let Some(function) = self.functions.get(name).copied() else {
                     return Err(Unsupported::new(format!("the function '{name}'")));
@@ -761,33 +1224,665 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         .get(i)
                         .copied()
                         .ok_or_else(|| Unsupported::new("too many arguments"))?;
-                    let want = if p.is_int_type() && p.into_int_type().get_bit_width() == 1 {
-                        Native::Bool
-                    } else {
-                        Native::Int
-                    };
+                    let _ = p;
+                    let want = self
+                        .fn_params
+                        .get(name)
+                        .and_then(|ps| ps.get(i).copied())
+                        .unwrap_or(Native::Int);
                     values.push(self.expr(a, want)?.into());
                 }
                 let call = self.builder.build_call(function, &values, "call").unwrap();
                 match call.try_as_basic_value() {
-                    inkwell::values::ValueKind::Basic(v) => Ok(v),
+                    inkwell::values::ValueKind::Basic(v) => {
+                        let held = self.fn_repr.get(name).copied().unwrap_or(Native::Int);
+                        if held == want {
+                            Ok(v)
+                        } else {
+                            self.convert(v, held, want)
+                        }
+                    }
                     _ => Err(Unsupported::new("using a none-producing call as a value")),
                 }
             }
-            ExprKind::Builtin { name, .. } => {
-                Err(Unsupported::new(format!("the builtin '{name}'")))
+            ExprKind::Builtin { name, args } => self.builtin(name, args, want),
+            ExprKind::ArrayLit(items) => self.array_literal(items, want),
+            ExprKind::If(chain) => self.if_value(chain, want),
+            ExprKind::Loop(l) => self.loop_value(l, want),
+            ExprKind::Constant(c) => {
+                let which = match c {
+                    Constant::Pi => 0u64,
+                    Constant::E => 1,
+                    Constant::Tau => 2,
+                };
+                let which = self.context.i32_type().const_int(which, false);
+                // The declared precision decides how much of an irrational to compute;
+                // without one, the same 15 places everything else defaults to.
+                let digits = self.context.i32_type().const_int(self.digits as u64, false);
+                let v = self
+                    .call_deci("ahpcl_constant", &[which.into(), digits.into()])
+                    .ok_or_else(|| Unsupported::new("a constant"))?;
+                self.convert(v, Native::Deci, want)
             }
-            ExprKind::ArrayLit(_) => Err(Unsupported::new("array literals")),
-            ExprKind::If(_) => Err(Unsupported::new("a conditional used as a value")),
-            ExprKind::Loop(_) => Err(Unsupported::new("a loop used as a value")),
-            ExprKind::Constant(_) => Err(Unsupported::new("π, e and τ")),
-            ExprKind::Str(_) => Err(Unsupported::new("text values")),
+            ExprKind::Str(text) => Ok(self.str_value(text)),
             ExprKind::Range { .. } => Err(Unsupported::new("a range outside a loop")),
             ExprKind::Option { .. } => Err(Unsupported::new("builtin options")),
         }
     }
 
-    fn binary(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+    /// A conditional used for its value: each arm hands back into one slot, and every
+    /// path meets at a single merge point.
+    fn if_value(
+        &mut self,
+        chain: &IfChain,
+        want: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        let function = self.current.expect("inside a function");
+        let ty = self.repr_type(want);
+        let slot = self.alloca("ifval", ty);
+        let merge = self.context.append_basic_block(function, "ifval.merge");
+
+        for arm in &chain.arms {
+            let body = self.context.append_basic_block(function, "ifval.arm");
+            let next = self.context.append_basic_block(function, "ifval.next");
+            match &arm.condition {
+                Some(c) => {
+                    let cond = self.expr(c, Native::Bool)?.into_int_value();
+                    self.builder.build_conditional_branch(cond, body, next).unwrap();
+                }
+                None => {
+                    self.builder.build_unconditional_branch(body).unwrap();
+                }
+            }
+            self.builder.position_at_end(body);
+            self.handbacks.push(Handback::Store(slot, want, merge));
+            let terminated = self.scoped(&arm.body);
+            self.handbacks.pop();
+            if !terminated? {
+                self.builder.build_unconditional_branch(merge).unwrap();
+            }
+            self.builder.position_at_end(next);
+        }
+        // An `if` with no matching arm still has to reach the merge point.
+        self.builder.build_unconditional_branch(merge).unwrap();
+        self.builder.position_at_end(merge);
+        Ok(self.builder.build_load(ty, slot, "ifval.out").unwrap())
+    }
+
+    /// A loop used for its value: each `handback` contributes one element.
+    fn loop_value(
+        &mut self,
+        l: &LoopStmt,
+        want: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        let elem = if want.is_array() { want.element() } else { Native::Num };
+        let kind = self.context.i32_type().const_int(elem.kind_tag() as u64, false);
+        let array = self
+            .call_runtime("ahpcl_array_empty", &[kind.into()])
+            .ok_or_else(|| Unsupported::new("collecting a loop's handbacks"))?;
+        self.handbacks.push(Handback::Push(array, elem));
+        let out = self.loop_stmt(l);
+        self.handbacks.pop();
+        out?;
+        Ok(array)
+    }
+
+    /// `-x`, `|x|`, `sqrt x`, `floor` and `ceil`, on whichever representation the
+    /// operand actually has.
+    fn unary_exact(
+        &mut self,
+        op: UnOp,
+        operand: &Expr,
+        want: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        let tag = match op {
+            UnOp::Neg => 0u64,
+            UnOp::Abs => 1,
+            UnOp::Sqrt => 2,
+            UnOp::Floor => 3,
+            _ => 4,
+        };
+        // A square root is a decimal even when its operand is a whole number, and
+        // floor and ceil hand back a whole number whatever went in.
+        let held = self.value_repr(operand);
+        let natural = match op {
+            UnOp::Sqrt => Native::Deci,
+            UnOp::Floor | UnOp::Ceil => Native::Int,
+            _ => held,
+        };
+
+        // Integers keep their machine instructions where the result is still an integer.
+        if natural == Native::Int && held == Native::Int && matches!(op, UnOp::Neg | UnOp::Abs) {
+            let v = self.expr(operand, Native::Int)?.into_int_value();
+            let neg = self.builder.build_int_neg(v, "neg").unwrap();
+            if op == UnOp::Neg {
+                return self.convert(neg.into(), Native::Int, want);
+            }
+            let is_neg = self
+                .builder
+                .build_int_compare(IntPredicate::SLT, v, self.i64().const_zero(), "isneg")
+                .unwrap();
+            let abs = self.builder.build_select(is_neg, neg, v, "abs").unwrap();
+            return self.convert(abs, Native::Int, want);
+        }
+
+        let tag = self.context.i32_type().const_int(tag, false);
+        let digits = self.context.i32_type().const_int(self.digits as u64, false);
+
+        // A rational stays rational under negation and absolute value; everything else
+        // goes through the tagged `num` path, which handles any kind.
+        if held == Native::Rat && matches!(op, UnOp::Neg | UnOp::Abs) {
+            let v = self.expr(operand, Native::Rat)?;
+            let p = self.spill(v, "un.rat");
+            let out = self
+                .call_rat("ahpcl_rat_unary", &[tag.into(), p.into(), digits.into()])
+                .ok_or_else(|| Unsupported::new("this operator on a rational"))?;
+            return self.convert(out, Native::Rat, want);
+        }
+        if held == Native::Deci && matches!(op, UnOp::Neg | UnOp::Abs | UnOp::Sqrt) {
+            let v = self.expr(operand, Native::Deci)?;
+            let p = self.spill(v, "un.deci");
+            let out = self
+                .call_deci("ahpcl_deci_unary", &[tag.into(), p.into(), digits.into()])
+                .ok_or_else(|| Unsupported::new("this operator on a decimal"))?;
+            return self.convert(out, Native::Deci, want);
+        }
+
+        let v = self.expr(operand, Native::Num)?;
+        let out = self
+            .call_runtime("ahpcl_num_unary", &[tag.into(), v.into(), digits.into()])
+            .ok_or_else(|| Unsupported::new("this operator"))?;
+        self.convert(out, Native::Num, want)
+    }
+
+    /// Move a value between native representations, through the runtime so the result
+    /// is exactly what the interpreter would have produced.
+    fn convert(
+        &mut self,
+        v: BasicValueEnum<'ctx>,
+        from: Native,
+        to: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        if from == to {
+            return Ok(v);
+        }
+        match (from, to) {
+            // Anything exact can be boxed into a `num`.
+            (Native::Int, Native::Num) => self
+                .call_runtime("ahpcl_num_from_int", &[v.into()])
+                .ok_or_else(|| Unsupported::new("boxing an int as a num")),
+            (Native::Bool, Native::Num) => {
+                let byte = self
+                    .builder
+                    .build_int_z_extend(v.into_int_value(), self.context.i8_type(), "numbool")
+                    .unwrap();
+                self.call_runtime("ahpcl_num_from_bool", &[byte.into()])
+                    .ok_or_else(|| Unsupported::new("boxing a bool as a num"))
+            }
+            (Native::Deci, Native::Num) => {
+                let p = self.spill(v, "numdeci");
+                self.call_runtime("ahpcl_num_from_deci", &[p.into()])
+                    .ok_or_else(|| Unsupported::new("boxing a decimal as a num"))
+            }
+            (Native::Rat, Native::Num) => {
+                let p = self.spill(v, "numrat");
+                self.call_runtime("ahpcl_num_from_rat", &[p.into()])
+                    .ok_or_else(|| Unsupported::new("boxing a rational as a num"))
+            }
+            // …and unboxed again where a narrower type is pinned by context.
+            (Native::Num, Native::Deci) => self
+                .call_deci("ahpcl_num_to_deci", &[v.into()])
+                .ok_or_else(|| Unsupported::new("reading a num as a decimal")),
+            (Native::Num, Native::Rat) => self
+                .call_rat("ahpcl_num_to_rat", &[v.into()])
+                .ok_or_else(|| Unsupported::new("reading a num as a rational")),
+            (Native::Num, Native::Int) => self
+                .call_runtime("ahpcl_num_to_int", &[v.into()])
+                .ok_or_else(|| Unsupported::new("reading a num as an int")),
+            (Native::Int, Native::Deci) => self
+                .call_deci("ahpcl_deci_from_int", &[v.into()])
+                .ok_or_else(|| Unsupported::new("widening an int to a decimal")),
+            (Native::Int, Native::Rat) => self
+                .call_rat("ahpcl_rat_from_int", &[v.into()])
+                .ok_or_else(|| Unsupported::new("widening an int to a rational")),
+            // A bool is already a machine word where an int is wanted.
+            (Native::Bool, Native::Int) => Ok(self
+                .builder
+                .build_int_z_extend(v.into_int_value(), self.i64(), "boolint")
+                .unwrap()
+                .into()),
+            _ => Err(Unsupported::new(format!("converting {from:?} to {to:?}"))),
+        }
+    }
+
+    /// Arithmetic and comparison on `num`, dispatched by the runtime on the tag each
+    /// side actually carries.
+    fn num_binary(
+        &mut self,
+        op: BinOp,
+        lhs: &Expr,
+        rhs: &Expr,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        let a = self.expr(lhs, Native::Num)?;
+        let b = self.expr(rhs, Native::Num)?;
+        self.num_binary_values(op, a, b)
+    }
+
+    fn num_binary_values(
+        &mut self,
+        op: BinOp,
+        a: BasicValueEnum<'ctx>,
+        b: BasicValueEnum<'ctx>,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        use BinOp::*;
+        if let Eq | NotEq | Less | Greater | LessEq | GreaterEq = op {
+            let cmp = self
+                .call_runtime("ahpcl_num_cmp", &[a.into(), b.into()])
+                .ok_or_else(|| Unsupported::new("num comparison"))?
+                .into_int_value();
+            let predicate = match op {
+                Eq => IntPredicate::EQ,
+                NotEq => IntPredicate::NE,
+                Less => IntPredicate::SLT,
+                Greater => IntPredicate::SGT,
+                LessEq => IntPredicate::SLE,
+                _ => IntPredicate::SGE,
+            };
+            let zero = self.context.i32_type().const_zero();
+            return Ok(self
+                .builder
+                .build_int_compare(predicate, cmp, zero, "numcmp")
+                .unwrap()
+                .into());
+        }
+
+        let tag = match op {
+            Add => 0,
+            Sub => 1,
+            Mul => 2,
+            Div => 3,
+            Pow => 4,
+            IntDiv => 5,
+            Mod => 6,
+            other => return Err(Unsupported::new(format!("{other:?} on num"))),
+        };
+        let tag = self.context.i32_type().const_int(tag, false);
+        self.call_runtime("ahpcl_num_binary", &[tag.into(), a.into(), b.into()])
+            .ok_or_else(|| Unsupported::new("num arithmetic"))
+    }
+
+    // ── arrays ──────────────────────────────────────────────────────────────
+
+    /// Allocate a runtime array of `len` elements holding `elem`.
+    fn array_new(&mut self, elem: Native, dims: &[u64]) -> BasicValueEnum<'ctx> {
+        let i64t = self.i64();
+        let shape = self.alloca_array("shape", i64t.into(), dims.len().max(1));
+        for (i, d) in dims.iter().enumerate() {
+            let slot = unsafe {
+                self.builder
+                    .build_gep(i64t, shape, &[i64t.const_int(i as u64, false)], "dim")
+                    .unwrap()
+            };
+            self.builder
+                .build_store(slot, i64t.const_int(*d, false))
+                .unwrap();
+        }
+        let kind = self.context.i32_type().const_int(elem.kind_tag() as u64, false);
+        let rank = self.context.i32_type().const_int(dims.len() as u64, false);
+        self.call_runtime("ahpcl_array_new", &[kind.into(), rank.into(), shape.into()])
+            .expect("ahpcl_array_new hands back a pointer")
+    }
+
+    /// Write one element, choosing the setter that matches its representation.
+    fn array_store(
+        &mut self,
+        array: BasicValueEnum<'ctx>,
+        index: u64,
+        value: BasicValueEnum<'ctx>,
+        elem: Native,
+    ) {
+        let i = self.i64().const_int(index, false);
+        self.array_store_at(array, i.into(), value, elem);
+    }
+
+    /// The same, with an index only known at runtime.
+    fn array_store_at(
+        &mut self,
+        array: BasicValueEnum<'ctx>,
+        i: BasicValueEnum<'ctx>,
+        value: BasicValueEnum<'ctx>,
+        elem: Native,
+    ) {
+        match elem {
+            Native::Deci | Native::Rat | Native::Str => {
+                let name = match elem {
+                    Native::Deci => "ahpcl_array_set_deci",
+                    Native::Rat => "ahpcl_array_set_rat",
+                    _ => "ahpcl_array_set_str",
+                };
+                let p = self.spill(value, "elem");
+                self.call_runtime(name, &[array.into(), i.into(), p.into()]);
+            }
+            Native::Num => {
+                self.call_runtime("ahpcl_array_set_num", &[array.into(), i.into(), value.into()]);
+            }
+            Native::Bool => {
+                let byte = self
+                    .builder
+                    .build_int_z_extend(value.into_int_value(), self.context.i8_type(), "elem.b")
+                    .unwrap();
+                self.call_runtime("ahpcl_array_set_bool", &[array.into(), i.into(), byte.into()]);
+            }
+            _ => {
+                self.call_runtime("ahpcl_array_set_int", &[array.into(), i.into(), value.into()]);
+            }
+        }
+    }
+
+    /// Read one element back out.
+    fn array_load(
+        &mut self,
+        array: BasicValueEnum<'ctx>,
+        index: BasicValueEnum<'ctx>,
+        elem: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        match elem {
+            Native::Deci => self
+                .call_deci("ahpcl_array_get_deci", &[array.into(), index.into()])
+                .ok_or_else(|| Unsupported::new("reading a decimal element")),
+            Native::Rat => self
+                .call_rat("ahpcl_array_get_rat", &[array.into(), index.into()])
+                .ok_or_else(|| Unsupported::new("reading a rational element")),
+            Native::Str => {
+                let out = self.alloca("elem.str", self.str_type().into());
+                self.call_runtime("ahpcl_array_get_str", &[out.into(), array.into(), index.into()]);
+                Ok(self.builder.build_load(self.str_type(), out, "elem.sval").unwrap())
+            }
+            Native::Num => self
+                .call_runtime("ahpcl_array_get_num", &[array.into(), index.into()])
+                .ok_or_else(|| Unsupported::new("reading a num element")),
+            Native::Bool => {
+                let byte = self
+                    .call_runtime("ahpcl_array_get_bool", &[array.into(), index.into()])
+                    .ok_or_else(|| Unsupported::new("reading a bool element"))?
+                    .into_int_value();
+                let zero = self.context.i8_type().const_zero();
+                Ok(self
+                    .builder
+                    .build_int_compare(IntPredicate::NE, byte, zero, "elem.bval")
+                    .unwrap()
+                    .into())
+            }
+            _ => self
+                .call_runtime("ahpcl_array_get_int", &[array.into(), index.into()])
+                .ok_or_else(|| Unsupported::new("reading an int element")),
+        }
+    }
+
+    /// `{'1','2','3'}`, including the nested form that mirrors a shape.
+    fn array_literal(
+        &mut self,
+        items: &[Expr],
+        want: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        let elem = if want.is_array() { want.element() } else { want };
+        let flat = flatten_literal(items);
+        let dims = literal_shape(items);
+        let array = self.array_new(elem, &dims);
+        for (i, item) in flat.iter().enumerate() {
+            let v = self.expr(item, elem)?;
+            // AHPCL indexes from 1, and so does the runtime.
+            self.array_store(array, i as u64 + 1, v, elem);
+        }
+        Ok(array)
+    }
+
+    /// A selector chain applied to an array: `:3;`, `:all;`, `:1 to 5 by 2;`, and so on.
+    fn array_selectors(
+        &mut self,
+        mut current: BasicValueEnum<'ctx>,
+        selectors: &[Selector],
+        elem: Native,
+        want: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        for (i, sel) in selectors.iter().enumerate() {
+            let last = i + 1 == selectors.len();
+            match sel {
+                Selector::All => {}
+                Selector::Length => {
+                    let n = self
+                        .call_runtime("ahpcl_array_len", &[current.into()])
+                        .ok_or_else(|| Unsupported::new("':length;'"))?;
+                    // A count is a machine int, but the surrounding expression may want
+                    // it as an exact value.
+                    return self.convert(n, Native::Int, want);
+                }
+                Selector::Shape => {
+                    current = self
+                        .call_runtime("ahpcl_array_shape", &[current.into()])
+                        .ok_or_else(|| Unsupported::new("':shape;'"))?;
+                }
+                Selector::Indices(ix) if ix.len() == 1 && last && !want.is_array() => {
+                    // A single index used as a value reads one element out.
+                    let index = self.expr(&ix[0], Native::Int)?;
+                    let v = self.array_load(current, index, elem)?;
+                    return self.convert(v, elem, want);
+                }
+                Selector::Indices(ix) => {
+                    let i64t = self.i64();
+                    let buffer = self.alloca_array("picks", i64t.into(), ix.len());
+                    for (n, e) in ix.iter().enumerate() {
+                        let v = self.expr(e, Native::Int)?;
+                        let slot = unsafe {
+                            self.builder
+                                .build_gep(i64t, buffer, &[i64t.const_int(n as u64, false)], "pick")
+                                .unwrap()
+                        };
+                        self.builder.build_store(slot, v).unwrap();
+                    }
+                    let count = i64t.const_int(ix.len() as u64, false);
+                    current = self
+                        .call_runtime(
+                            "ahpcl_array_select",
+                            &[current.into(), buffer.into(), count.into()],
+                        )
+                        .ok_or_else(|| Unsupported::new("an index selector"))?;
+                }
+                Selector::Range { from, to, by } => {
+                    let f = self.expr(from, Native::Int)?;
+                    let t = self.expr(to, Native::Int)?;
+                    let step = match by {
+                        Some(e) => self.expr(e, Native::Int)?,
+                        None => self.i64().const_int(1, false).into(),
+                    };
+                    current = self
+                        .call_runtime(
+                            "ahpcl_array_range",
+                            &[current.into(), f.into(), t.into(), step.into()],
+                        )
+                        .ok_or_else(|| Unsupported::new("a range selector"))?;
+                }
+            }
+        }
+        Ok(current)
+    }
+
+    /// Arithmetic where at least one side is a bare array reference, which Rule A
+    /// reduces to the sum of its elements. The sum is a `num`, since the elements may
+    /// be any exact kind, so the whole operation runs on the `num` path.
+    fn reduced_binary(
+        &mut self,
+        op: BinOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        reduce_l: bool,
+        reduce_r: bool,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        let a = self.side_as_num(lhs, reduce_l)?;
+        let b = self.side_as_num(rhs, reduce_r)?;
+        self.num_binary_values(op, a, b)
+    }
+
+    fn side_as_num(
+        &mut self,
+        e: &Expr,
+        reduce: bool,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        if reduce {
+            let array = self.expr(e, self.value_repr(e))?;
+            return self
+                .call_runtime("ahpcl_array_sum", &[array.into()])
+                .ok_or_else(|| Unsupported::new("summing an array"));
+        }
+        self.expr(e, Native::Num)
+    }
+
+    /// The four array operators, plus elementwise arithmetic between arrays.
+    fn array_binary(
+        &mut self,
+        op: BinOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        want: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        use BinOp::*;
+        let lr = self.value_repr(lhs);
+        let rr = self.value_repr(rhs);
+        // A scalar beside an array is broadcast, so it becomes a one-element array.
+        let a = self.as_array(lhs, lr, want)?;
+        let b = self.as_array(rhs, rr, want)?;
+
+        let name = match op {
+            Dot => "ahpcl_array_dot",
+            Cross => "ahpcl_array_cross",
+            Hadamard => "ahpcl_array_hadamard",
+            Tensor => "ahpcl_array_tensor",
+            Add | Sub | Mul | Div => {
+                let tag = match op {
+                    Add => 0,
+                    Sub => 1,
+                    Mul => 2,
+                    _ => 3,
+                };
+                let tag = self.context.i32_type().const_int(tag, false);
+                return self
+                    .call_runtime("ahpcl_array_elementwise", &[tag.into(), a.into(), b.into()])
+                    .ok_or_else(|| Unsupported::new("elementwise arithmetic"));
+            }
+            other => return Err(Unsupported::new(format!("{other:?} on arrays"))),
+        };
+        let out = self
+            .call_runtime(name, &[a.into(), b.into()])
+            .ok_or_else(|| Unsupported::new("an array operator"))?;
+        // A dot product of two vectors is a single value, handed back as a
+        // one-element array; read it out when the context wants a scalar.
+        if op == Dot && !want.is_array() {
+            let one = self.i64().const_int(1, false);
+            return self.array_load(out, one.into(), want);
+        }
+        Ok(out)
+    }
+
+    /// Evaluate an operand as an array, wrapping a scalar in a one-element array so the
+    /// runtime can broadcast it.
+    fn as_array(
+        &mut self,
+        e: &Expr,
+        repr: Native,
+        want: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        if repr.is_array() {
+            return self.expr(e, repr);
+        }
+        let elem = if repr == Native::Int && want.is_array() { want.element() } else { repr };
+        let v = self.expr(e, elem)?;
+        let array = self.array_new(elem, &[1]);
+        self.array_store(array, 1, v, elem);
+        Ok(array)
+    }
+
+    /// `read` and `parse`, the two builtins that produce a value.
+    fn builtin(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        want: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        match name {
+            "read" => {
+                // Any argument is a prompt, printed before reading.
+                for a in args {
+                    self.print(std::slice::from_ref(a))?;
+                }
+                let out = self.alloca("read.out", self.str_type().into());
+                self.call_runtime("ahpcl_read_line", &[out.into()]);
+                Ok(self.builder.build_load(self.str_type(), out, "read.val").unwrap())
+            }
+            "parse" => {
+                let first = args
+                    .first()
+                    .ok_or_else(|| Unsupported::new("parse without a value"))?;
+                let text = self.expr(first, Native::Str)?;
+                let text = self.spill(text, "parse.text");
+
+                let mut flags = 0u64;
+                let mut group = None;
+                let mut decimal = None;
+                for opt in &args[1..] {
+                    let ExprKind::Option { name, value } = &opt.kind else {
+                        return Err(Unsupported::new("a parse argument that is not an option"));
+                    };
+                    match name.as_str() {
+                        "trim" => flags |= 1,
+                        "scientific" => flags |= 2,
+                        "hex" => flags |= 4,
+                        "unicode-digits" => flags |= 8,
+                        "group" | "decimal" => {
+                            let Some(v) = value else {
+                                return Err(Unsupported::new(format!("'{name}' without a value")));
+                            };
+                            let (ExprKind::Str(t) | ExprKind::Literal(t)) = &v.kind else {
+                                return Err(Unsupported::new("a non-literal separator"));
+                            };
+                            let held = self.str_value(t);
+                            let slot = self.spill(held, "parse.sep");
+                            if name == "group" { group = Some(slot) } else { decimal = Some(slot) }
+                        }
+                        other => return Err(Unsupported::new(format!("the parse option '{other}'"))),
+                    }
+                }
+
+                let null = self.context.ptr_type(inkwell::AddressSpace::default()).const_null();
+                let g = group.map(|p| p.into()).unwrap_or(null);
+                let d = decimal.map(|p| p.into()).unwrap_or(null);
+                let flags = self.i64().const_int(flags, false);
+
+                match want {
+                    Native::Rat => self
+                        .call_rat("ahpcl_parse_rat", &[text.into(), flags.into(), g.into(), d.into()])
+                        .ok_or_else(|| Unsupported::new("parsing a rational")),
+                    Native::Deci => self
+                        .call_deci("ahpcl_parse_deci", &[text.into(), flags.into(), g.into(), d.into()])
+                        .ok_or_else(|| Unsupported::new("parsing a decimal")),
+                    _ => self
+                        .call_runtime(
+                            "ahpcl_parse_int",
+                            &[text.into(), flags.into(), g.into(), d.into()],
+                        )
+                        .ok_or_else(|| Unsupported::new("parsing an int")),
+                }
+            }
+            other => Err(Unsupported::new(format!("the builtin '{other}'"))),
+        }
+    }
+
+    fn binary(
+        &mut self,
+        op: BinOp,
+        lhs: &Expr,
+        rhs: &Expr,
+        want: Native,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
         use BinOp::*;
 
         if matches!(op, And | Or) {
@@ -801,9 +1896,52 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             return Ok(v.into());
         }
 
-        // Exact decimals have no machine instruction, so their arithmetic becomes a
+        // Exact values have no machine instruction, so their arithmetic becomes a
         // runtime call.
-        if self.value_repr(lhs) == Native::Deci || self.value_repr(rhs) == Native::Deci {
+        // The wanted type counts too: `1 / 3` is integer-looking but exact when the
+        // context asks for a rational.
+        let arithmetic = !matches!(
+            op,
+            Eq | NotEq | Less | Greater | LessEq | GreaterEq | And | Or
+        );
+        let reprs = [self.value_repr(lhs), self.value_repr(rhs)];
+
+        // Rule A: a *bare* array reference sums its elements, while one carrying a
+        // selector — `('a'):all;` — stays an array and the operation is elementwise.
+        // The array operators are the exception: `· × ⊙ ⊗` imply `:all;`, having no
+        // scalar meaning at all.
+        let implies_all = matches!(op, Dot | Cross | Hadamard | Tensor);
+        if !implies_all && (is_bare_ref(lhs) || is_bare_ref(rhs)) {
+            let reduce_l = is_bare_ref(lhs) && reprs[0].is_array();
+            let reduce_r = is_bare_ref(rhs) && reprs[1].is_array();
+            if reduce_l || reduce_r {
+                let out = self.reduced_binary(op, lhs, rhs, reduce_l, reduce_r)?;
+                if arithmetic && want != Native::Num {
+                    return self.convert(out, Native::Num, want);
+                }
+                return Ok(out);
+            }
+        }
+
+        if implies_all || reprs.iter().any(|r| r.is_array()) {
+            return self.array_binary(op, lhs, rhs, want);
+        }
+        if reprs.contains(&Native::Str) {
+            return self.text_binary(op, lhs, rhs);
+        }
+        if reprs.contains(&Native::Num) || (arithmetic && want == Native::Num) {
+            let out = self.num_binary(op, lhs, rhs)?;
+            // A comparison is already a machine bool; arithmetic hands back a boxed
+            // `num`, which the surrounding context may have pinned to a narrower type.
+            if arithmetic && want != Native::Num {
+                return self.convert(out, Native::Num, want);
+            }
+            return Ok(out);
+        }
+        if reprs.contains(&Native::Rat) || (arithmetic && want == Native::Rat) {
+            return self.rational_binary(op, lhs, rhs);
+        }
+        if reprs.contains(&Native::Deci) || (arithmetic && want == Native::Deci) {
             return self.decimal_binary(op, lhs, rhs);
         }
 
@@ -862,7 +2000,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Sub => "ahpcl_deci_sub",
             Mul => "ahpcl_deci_mul",
             Div => {
-                let digits = self.context.i32_type().const_int(15, false);
+                let digits = self.context.i32_type().const_int(self.digits as u64, false);
                 return self
                     .call_deci("ahpcl_deci_div", &[pa.into(), pb.into(), digits.into()])
                     .ok_or_else(|| Unsupported::new("decimal division"));
@@ -887,10 +2025,110 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .unwrap()
                     .into());
             }
+            IntDiv => {
+                return self
+                    .call_runtime("ahpcl_deci_int_div", &[pa.into(), pb.into()])
+                    .ok_or_else(|| Unsupported::new("integer division of decimals"));
+            }
+            Pow | Mod => {
+                let tag = self.context.i32_type().const_int(if op == Pow { 4 } else { 6 }, false);
+                return self
+                    .call_deci("ahpcl_deci_binary", &[tag.into(), pa.into(), pb.into()])
+                    .ok_or_else(|| Unsupported::new("this operator on decimals"));
+            }
             other => return Err(Unsupported::new(format!("{other:?} on decimals"))),
         };
         self.call_deci(name, &[pa.into(), pb.into()])
             .ok_or_else(|| Unsupported::new("decimal arithmetic"))
+    }
+
+    /// Text supports ordering only; the runtime does the byte comparison.
+    fn text_binary(
+        &mut self,
+        op: BinOp,
+        lhs: &Expr,
+        rhs: &Expr,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        use BinOp::*;
+        let predicate = match op {
+            Eq => IntPredicate::EQ,
+            NotEq => IntPredicate::NE,
+            Less => IntPredicate::SLT,
+            Greater => IntPredicate::SGT,
+            LessEq => IntPredicate::SLE,
+            GreaterEq => IntPredicate::SGE,
+            other => return Err(Unsupported::new(format!("{other:?} on text"))),
+        };
+        let a = self.expr(lhs, Native::Str)?;
+        let b = self.expr(rhs, Native::Str)?;
+        let pa = self.spill(a, "slhs");
+        let pb = self.spill(b, "srhs");
+        let cmp = self
+            .call_runtime("ahpcl_str_cmp", &[pa.into(), pb.into()])
+            .ok_or_else(|| Unsupported::new("text comparison"))?
+            .into_int_value();
+        let zero = self.context.i32_type().const_zero();
+        Ok(self
+            .builder
+            .build_int_compare(predicate, cmp, zero, "strcmp")
+            .unwrap()
+            .into())
+    }
+
+    fn rational_binary(
+        &mut self,
+        op: BinOp,
+        lhs: &Expr,
+        rhs: &Expr,
+    ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        use BinOp::*;
+        let a = self.expr(lhs, Native::Rat)?;
+        let b = self.expr(rhs, Native::Rat)?;
+        let pa = self.spill(a, "rlhs");
+        let pb = self.spill(b, "rrhs");
+
+        let name = match op {
+            Add => "ahpcl_rat_add",
+            Sub => "ahpcl_rat_sub",
+            Mul => "ahpcl_rat_mul",
+            Div => "ahpcl_rat_div",
+            Eq | NotEq | Less | Greater | LessEq | GreaterEq => {
+                let cmp = self
+                    .call_runtime("ahpcl_rat_cmp", &[pa.into(), pb.into()])
+                    .ok_or_else(|| Unsupported::new("rational comparison"))?
+                    .into_int_value();
+                let zero = self.context.i32_type().const_zero();
+                let predicate = match op {
+                    Eq => IntPredicate::EQ,
+                    NotEq => IntPredicate::NE,
+                    Less => IntPredicate::SLT,
+                    Greater => IntPredicate::SGT,
+                    LessEq => IntPredicate::SLE,
+                    _ => IntPredicate::SGE,
+                };
+                return Ok(self
+                    .builder
+                    .build_int_compare(predicate, cmp, zero, "ratcmp")
+                    .unwrap()
+                    .into());
+            }
+            Pow | IntDiv | Mod => {
+                let tag = self.context.i32_type().const_int(
+                    match op {
+                        Pow => 4,
+                        IntDiv => 5,
+                        _ => 6,
+                    },
+                    false,
+                );
+                return self
+                    .call_rat("ahpcl_rat_binary", &[tag.into(), pa.into(), pb.into()])
+                    .ok_or_else(|| Unsupported::new("this operator on rationals"));
+            }
+            other => return Err(Unsupported::new(format!("{other:?} on rationals"))),
+        };
+        self.call_rat(name, &[pa.into(), pb.into()])
+            .ok_or_else(|| Unsupported::new("rational arithmetic"))
     }
 
     /// Integer exponentiation by a loop, since LLVM has no integer power instruction.
@@ -933,21 +2171,113 @@ enum Native {
     Bool,
     /// An exact decimal, held as the runtime's struct and operated on by calls.
     Deci,
+    /// An exact rational: numerator and denominator, likewise by-pointer.
+    Rat,
+    /// Text: a pointer and a byte length.
+    Str,
+    /// `num`, the top of the numeric hierarchy: a tagged value holding whichever
+    /// exact kind flowed into it, as an opaque pointer to a runtime object.
+    Num,
+    /// An array, as an opaque pointer to a runtime-managed object. The tag says which
+    /// element type it holds, matching the `KIND_*` constants in the runtime.
+    Array(u32),
     None,
+}
+
+impl Native {
+    fn is_array(self) -> bool {
+        matches!(self, Native::Array(_))
+    }
+
+    /// The runtime's element-kind tag for a scalar representation.
+    fn kind_tag(self) -> u32 {
+        match self {
+            Native::Bool => 1,
+            Native::Deci => 2,
+            Native::Rat => 3,
+            Native::Str => 4,
+            Native::Num => 5,
+            _ => 0,
+        }
+    }
+
+    /// The scalar representation an array's elements are read as.
+    fn element(self) -> Native {
+        match self {
+            Native::Array(1) => Native::Bool,
+            Native::Array(2) => Native::Deci,
+            Native::Array(3) => Native::Rat,
+            Native::Array(4) => Native::Str,
+            Native::Array(5) => Native::Num,
+            _ => Native::Int,
+        }
+    }
+}
+
+/// How many decimal places a division or an irrational keeps when nothing says
+/// otherwise. The interpreter uses the same number, so the two agree digit for digit.
+const DEFAULT_DIGITS: u32 = 15;
+
+/// Where a `handback` inside the current block should send its value.
+#[derive(Clone, Copy)]
+enum Handback<'ctx> {
+    /// Into a slot, then on to the merge point: a conditional used as a value.
+    Store(inkwell::values::PointerValue<'ctx>, Native, inkwell::basic_block::BasicBlock<'ctx>),
+    /// Appended to a collected array: a loop used as a value.
+    Push(BasicValueEnum<'ctx>, Native),
 }
 
 /// Which native representation a declared type maps onto, if any.
 fn native_base(ty: &TypeRef) -> Result<Native, Unsupported> {
     if ty.rank.is_some() {
-        return Err(Unsupported::new("arrays"));
+        let scalar = TypeRef { rank: None, ..ty.clone() };
+        return Ok(Native::Array(native_base(&scalar)?.kind_tag()));
     }
     match ty.base.as_str() {
         "int" => Ok(Native::Int),
         "bool" => Ok(Native::Bool),
         "deci" => Ok(Native::Deci),
+        "rat" => Ok(Native::Rat),
+        "str" => Ok(Native::Str),
+        "num" => Ok(Native::Num),
+        // `infnum` is exact and `i128`-backed, so it shares the decimal
+        // representation — see the v1 bounds in docs/types.md.
+        "infnum" | "∞num" => Ok(Native::Deci),
         "none" => Ok(Native::None),
         other => Err(Unsupported::new(format!("the type '{other}'"))),
     }
+}
+
+/// Whether an expression is a plain `('name')` with no selector, which is what Rule A
+/// keys on.
+fn is_bare_ref(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ref { selectors, .. } => selectors.is_empty(),
+        ExprKind::Math(inner) => is_bare_ref(inner),
+        _ => false,
+    }
+}
+
+/// An array literal may be nested to mirror its shape; the elements are stored in
+/// row-major order, so read the leaves left to right.
+fn flatten_literal(items: &[Expr]) -> Vec<&Expr> {
+    let mut out = Vec::new();
+    for item in items {
+        match &item.kind {
+            ExprKind::ArrayLit(inner) => out.extend(flatten_literal(inner)),
+            _ => out.push(item),
+        }
+    }
+    out
+}
+
+/// The shape a nested literal describes: `{{1,2},{3,4}}` is `[2, 2]`.
+fn literal_shape(items: &[Expr]) -> Vec<u64> {
+    let mut dims = vec![items.len() as u64];
+    if let Some(Expr { kind: ExprKind::ArrayLit(inner), .. }) = items.first() {
+        dims.extend(literal_shape(inner));
+    }
+    dims
 }
 
 /// Split `"0.1"` into mantissa and scale: `(1, 1)`, meaning 1/10¹.

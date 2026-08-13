@@ -36,9 +36,10 @@ libLLVM is required, which makes build times and CI caching a real concern.
 it is exactly what layer 1 of verification requires (see [types.md](types.md)). One piece of
 work paying for three features — const-eval, verification, and the REPL.
 
-## Recommended sequencing — **PROPOSED**
+## Recommended sequencing — **AOT done, JIT next**
 
-**AOT first, JIT second.** Same decisions, ordered by difficulty. AOT is: build the module,
+**AOT first, JIT second.** AOT is built and covers every type — see below. The JIT is
+untouched. Same decisions, ordered by difficulty. AOT is: build the module,
 write a `.o`, call `clang` to link. The JIT means LLVM's ORC — executable memory permissions,
 runtime symbol resolution, relocations — and `inkwell`'s ORC coverage is thinner than its
 IR-building surface, so parts of it mean raw `llvm-sys` C calls in `unsafe` Rust. It is the
@@ -93,6 +94,51 @@ than as 0/1.
 
 **Output is flushed on every write.** A compiled program's entry point is LLVM's C `main`,
 not Rust's, so Rust's flush-on-exit never runs and buffered output would be lost.
+
+## What compiles natively — **every type** — DECIDED
+
+AOT covers the whole type system, not a machine-word subset. Each type reaches native code
+by the cheapest representation that stays exact:
+
+| Type | Native representation |
+|---|---|
+| `int`, `bool` | machine words |
+| `deci`, `infnum` | `{ i128, i32, i32 }`, by pointer |
+| `rat` | `{ i128, i128, i64 }` — numerator, denominator, failed — by pointer |
+| `str` | `{ ptr, len }`, UTF-8 |
+| arrays (`vector`/`matrix`/`tensor`) | opaque pointer to a runtime object |
+| `num` | opaque pointer to a *tagged* value |
+
+Three decisions behind that table:
+
+**`rat` and `infnum` needed no heap.** A rational is a fixed-size pair of `i128`, so it
+reuses the by-pointer ABI decimals already had. `infnum` is `i128`-backed in v1, so it
+shares the decimal representation outright — its unboundedness is a v1 limit recorded in
+`types.md`, not a codegen gap.
+
+**Arrays are opaque to the compiler.** Generated code holds a pointer and never computes
+an element offset; every read and write is a runtime call. That costs a call per element
+and buys total immunity from the layout disagreements that made decimals silently
+misbehave — the compiler and the runtime cannot disagree about a size neither one names.
+
+**`num` is a tagged value, because it has to be.** `num` is the top of the numeric
+hierarchy and holds whichever exact kind flowed into it, so no fixed layout can represent
+it. It is the same tagged cell an array element is, and arithmetic promotes the narrower
+side in the runtime — the same promotion the interpreter performs, so the two agree
+digit for digit rather than approximately.
+
+**Rule A is enforced in the backend too.** A *bare* array reference sums its elements,
+while `('a'):all;` stays an array and the operation is elementwise. Getting this wrong is
+not a slow path but a wrong answer, and it was the worst bug in the interpreter.
+
+Values built at runtime — text, arrays, boxed `num`s — are not freed during the run; the
+process exit reclaims them. Freeing needs ownership tracking, which v1 does not have. A
+program that builds a million strings in a loop holds a million strings.
+
+**Decimals are normalised after every operation.** Multiplication adds scales, so without
+dropping trailing zeros a chain of operations compounds 15 digits into 30, then 60, until
+the value overflows into nonsense. This was not cosmetic: an average printed as a 500-digit
+integer until the runtime normalised the way the interpreter does.
 
 ## Repository
 

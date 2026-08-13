@@ -647,3 +647,16 @@ fn a_loop_counter_may_carry_a_precision() {
         "1\n2\n3"
     );
 }
+
+#[test]
+fn a_functions_return_type_is_the_context_its_handback_divides_in() {
+    // Division follows the context, and a function's declared return type *is* the
+    // context. Without that, this handed back 0.333333333333333 from a `rat`.
+    assert_eq!(
+        one(
+            "func:rat 'third' [var:rat 'x'] { hb math { ('x') / '3' }. }.\n\
+             var:rat 'r' = 'third'['1'].\nprint[('r')]."
+        ),
+        "1/3"
+    );
+}
