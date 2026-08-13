@@ -154,8 +154,8 @@ unsafe fn bounds(a: &Array, index: i64) -> usize {
     let len = a.items.len();
     if index < 1 || index as usize > len {
         fail_with(
-            "AHPCL-RUN-0002",
-            &format!("index {index} is outside this array, which has {len} elements"),
+            "AHPCL-RUN-0003",
+            &format!("index {index} is out of range for an array of length {len}"),
         );
     }
     index as usize - 1
@@ -303,7 +303,7 @@ pub unsafe extern "C" fn ahpcl_array_range(
     step: i64,
 ) -> *mut Array {
     if step == 0 {
-        fail_with("AHPCL-RUN-0002", "a selector step of 0 would never advance");
+        fail_with("AHPCL-RUN-0001", "a selector step of 0 would never advance");
     }
     let a = &*a;
     let mut items = Vec::new();
@@ -355,7 +355,7 @@ unsafe fn positions(sel: &AhpclSelector, extent: u64, dim: usize) -> (Vec<usize>
         }
         2 => {
             if sel.by == 0 {
-                fail_with("AHPCL-RUN-0003", "a selector step of 0 would never advance");
+                fail_with("AHPCL-RUN-0001", "a selector step of 0 would never advance");
             }
             let mut out = Vec::new();
             let mut i = sel.from;
@@ -485,13 +485,13 @@ fn arith(op: u32, a: &Cell, b: &Cell) -> Cell {
                 OP_MUL => x.checked_mul(y),
                 OP_POW => {
                     if y < 0 || y > u32::MAX as i128 {
-                        fail_with("AHPCL-RUN-0001", "this exponent is out of range");
+                        fail_with("AHPCL-PREC-0004", "this exponent is out of range");
                     }
                     x.checked_pow(y as u32)
                 }
                 OP_INTDIV | OP_MOD => {
                     if y == 0 {
-                        fail_with("AHPCL-RUN-0001", "division by zero");
+                        fail_with("AHPCL-RUN-0002", "division by zero");
                     }
                     // Euclidean, matching the interpreter and `ahpcl_int_div`.
                     Some(if op == OP_INTDIV { x.div_euclid(y) } else { x.rem_euclid(y) })
@@ -505,7 +505,7 @@ fn arith(op: u32, a: &Cell, b: &Cell) -> Cell {
             };
             match r {
                 Some(v) => Int(v),
-                None => fail_with("AHPCL-RUN-0001", "this array arithmetic overflowed"),
+                None => fail_with("AHPCL-PREC-0004", "this array arithmetic overflowed"),
             }
         }
     }
@@ -832,7 +832,7 @@ pub(crate) fn unary(op: u32, c: &Cell, digits: u32) -> Cell {
             let d = to_deci(c);
             let p = match 10i128.checked_pow(d.scale) {
                 Some(p) => p,
-                None => fail_with("AHPCL-RUN-0001", "this value is too large to round"),
+                None => fail_with("AHPCL-PREC-0004", "this value is too large to round"),
             };
             let mut whole = d.mantissa / p;
             let remainder = d.mantissa % p;

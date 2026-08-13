@@ -114,8 +114,12 @@ fn main() -> ExitCode {
                     }
                     if let Some(err) = outcome.error {
                         eprint!("{}", ahpcl_diagnostics::error::render(&report.source, &[err]));
-                        failed = true;
                     }
+                    // The task asked for a binary and there is none. Saying so — and
+                    // exiting non-zero — beats a silent success that wrote no file.
+                    eprintln!();
+                    eprintln!("no binary was written: {} does not exist.", out.display());
+                    failed = true;
                 }
                 Err(message) => {
                     eprintln!("AHPCL Error Handler:");

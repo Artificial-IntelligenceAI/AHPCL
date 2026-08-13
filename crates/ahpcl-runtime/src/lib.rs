@@ -61,11 +61,11 @@ pub(crate) fn deci_apply(op: u32, a: AhpclDecimal, b: AhpclDecimal) -> AhpclDeci
         }
         array::OP_INTDIV | array::OP_MOD => {
             if b.mantissa == 0 {
-                fail_with("AHPCL-RUN-0001", "division by zero");
+                fail_with("AHPCL-RUN-0002", "division by zero");
             }
             let (x, y, _) = match align(a, b) {
                 Some(v) => v,
-                None => fail_with("AHPCL-RUN-0001", "this decimal arithmetic overflowed"),
+                None => fail_with("AHPCL-PREC-0004", "this decimal arithmetic overflowed"),
             };
             Some(if op == array::OP_INTDIV {
                 AhpclDecimal::ok(x.div_euclid(y), 0)
@@ -79,7 +79,7 @@ pub(crate) fn deci_apply(op: u32, a: AhpclDecimal, b: AhpclDecimal) -> AhpclDeci
     };
     match out {
         Some(d) if d.failed == 0 => d,
-        _ => fail_with("AHPCL-RUN-0001", "this decimal arithmetic overflowed or divided by zero"),
+        _ => fail_with("AHPCL-PREC-0004", "this decimal arithmetic overflowed or divided by zero"),
     }
 }
 
@@ -137,12 +137,12 @@ pub(crate) fn deci_sqrt(d: AhpclDecimal, digits: u32) -> AhpclDecimal {
     let scaled = if shift >= 0 {
         match pow10(shift as u32).and_then(|p| d.mantissa.checked_mul(p)) {
             Some(v) => v,
-            None => fail_with("AHPCL-RUN-0001", "this square root overflowed"),
+            None => fail_with("AHPCL-PREC-0004", "this square root overflowed"),
         }
     } else {
         match pow10((-shift) as u32) {
             Some(p) => d.mantissa / p,
-            None => fail_with("AHPCL-RUN-0001", "this square root overflowed"),
+            None => fail_with("AHPCL-PREC-0004", "this square root overflowed"),
         }
     };
     AhpclDecimal::ok(integer_sqrt(scaled as u128) as i128, digits)
@@ -178,7 +178,7 @@ pub(crate) fn rat_apply(op: u32, a: AhpclRational, b: AhpclRational) -> AhpclRat
         }
         array::OP_INTDIV | array::OP_MOD => {
             if b.num == 0 {
-                fail_with("AHPCL-RUN-0001", "division by zero");
+                fail_with("AHPCL-RUN-0002", "division by zero");
             }
             let q = rat_div(a, b);
             let whole = q.num.div_euclid(q.den);
@@ -191,7 +191,7 @@ pub(crate) fn rat_apply(op: u32, a: AhpclRational, b: AhpclRational) -> AhpclRat
         _ => rat_div(a, b),
     };
     if out.failed != 0 {
-        fail_with("AHPCL-RUN-0001", "this rational arithmetic overflowed or divided by zero");
+        fail_with("AHPCL-PREC-0004", "this rational arithmetic overflowed or divided by zero");
     }
     out
 }
@@ -304,14 +304,14 @@ pub unsafe extern "C" fn ahpcl_deci_div(
 /// inspect the flag, so the runtime stops here rather than handing back a silent 0.
 fn checked_deci(d: AhpclDecimal) -> AhpclDecimal {
     if d.failed != 0 {
-        fail_with("AHPCL-RUN-0001", "this decimal arithmetic overflowed");
+        fail_with("AHPCL-PREC-0004", "this decimal arithmetic overflowed");
     }
     d
 }
 
 fn checked_rat(r: AhpclRational) -> AhpclRational {
     if r.failed != 0 {
-        fail_with("AHPCL-RUN-0001", "this rational arithmetic overflowed or divided by zero");
+        fail_with("AHPCL-PREC-0004", "this rational arithmetic overflowed or divided by zero");
     }
     r
 }
@@ -412,7 +412,7 @@ pub unsafe extern "C" fn ahpcl_read_file(out: *mut AhpclStr, path: *const AhpclS
     let path = (*path).as_str();
     match std::fs::read_to_string(path) {
         Ok(text) => *out = AhpclStr::owned(text),
-        Err(e) => fail_with("AHPCL-RUN-0004", &format!("{path} could not be read — {e}")),
+        Err(e) => fail_with("AHPCL-RUN-0001", &format!("{path} could not be read — {e}")),
     }
 }
 
@@ -572,7 +572,7 @@ pub unsafe extern "C" fn ahpcl_parse_rat(
 
 unsafe fn parse_failure(text: *const AhpclStr) -> ! {
     let message = format!("'{}' is not a number", (*text).as_str());
-    let code = std::ffi::CString::new("AHPCL-RUN-0003").unwrap();
+    let code = std::ffi::CString::new("AHPCL-RUN-0004").unwrap();
     let msg = std::ffi::CString::new(message).unwrap();
     ahpcl_fail(code.as_ptr(), msg.as_ptr())
 }
