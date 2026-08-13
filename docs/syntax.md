@@ -224,6 +224,27 @@ The rest of the family — **PROPOSED**, implied but not separately confirmed:
 | Less or equal | `<=`, `≤` |
 | Greater or equal | `>=`, `≥` |
 
+### Constants — **DECIDED**
+
+Constants are **bare keywords inside `math { }`**, not variables:
+
+```
+math { 2 x π x ('r') }
+math { pi }                # ASCII spelling
+```
+
+They are not variables precisely so that nothing can reassign them. Everything in AHPCL is
+mutable, so a predefined variable `('π')` could be overwritten with `change:var:deci 'π' = '3'.`
+and the compiler could not object. Making constants immutable would have created an exception to
+"everything is mutable"; making them keywords avoids needing one.
+
+Math mode already has bare keywords (`to`, `by`, `mod`, `and`), so this needs no new mechanism.
+
+Rejected: predefined variables (mutable, so `π` could be redefined) and no builtin constants
+(everyone writes their own π to a different number of digits, and `∞` has no expression at all).
+
+**OPEN:** the full list (`π`, `e`, `∞`, …), their ASCII spellings, and how precision is pinned.
+
 ### Boolean operators — **DECIDED**
 
 Words **and** symbols, both legal — the pattern already used for multiplication and power:

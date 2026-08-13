@@ -48,8 +48,8 @@ operations that do not exist. `≤ ≥ ≠ ÷` alias things that do exist. `∧ 
 `∧ ∨ ¬` are now **decided** (see [syntax.md](syntax.md)).
 `· × ⊙ ⊗` are reserved operations, and `∘` is unassigned.
 
-**3b. Are there constants at all?** `π`, `∞`, `e` — nothing in the language provides a named
-constant, and a calculations language plainly wants them.
+**3b. The constant list** — `π`, `e`, `∞`, and their ASCII spellings. The mechanism is decided
+(bare keywords in `math { }`); the roster is not.
 
 **3c. Is there a square root**, and are there other maths builtins (`sin`, `log`, `abs`, `round`)?
 None exist. Relates to #6b, whether value-returning builtins are quoted.
