@@ -94,6 +94,36 @@ significant digits, which is what financial systems actually use.
 
 `infnum [n bit]` is an **error** — it is unbounded by definition.
 
+### `[n digits]` for irrationals — **DECIDED**
+
+`infnum` accepts a **digit** count, which is how much of an irrational value you want:
+
+```
+var:infnum 'x' [100 digits] = math { π }.
+var:infnum 'c' [50 digits]  = math { 2 x π x ('r') }.
+```
+
+Not a contradiction with the rule above: **bits are about storage size**, which is meaningless for
+an unbounded type, while **digits are about how much of an infinite value to compute**.
+
+Without this, `var:infnum 'x' = math { π }.` would have to be an error — and a subtle one. It is
+not that `infnum` is too small for π; π is irrational, so *no* finite number of digits is exact,
+and "as many as needed" never terminates. `infnum` holds exact numbers of unlimited size; π is not
+exact at any size. `[n digits]` is how you say "this much of it".
+
+**Precision belongs to the computation, not to one operand.** `math { 2 x π x ('r') }` at
+50 digits carries 50 digits through the whole calculation, which is how real arbitrary-precision
+arithmetic works (MPFR, mpmath). Attaching a digit count to the constant instead would give "π to
+50 digits, then multiplied", whose result has a quietly different accuracy than requested.
+
+Rejected: a selector on the constant (`math { π:100; }`) and a keyword form
+(`math { π to 100 digits }`), both for that reason.
+
+**PARKED, not rejected:** keeping π **symbolic** — `math { 2 x π }` staying exactly `2π` until
+something forces digits, as Mathematica and SymPy do. Genuinely on-brand, since exact/symbolic is
+one of the three stated domains, but far larger than anything decided so far: it needs symbolic
+values, simplification, and rules for when they collapse to numbers.
+
 ### When precision is omitted — **DECIDED**
 
 The compiler **never guesses a width.** It infers one by **range analysis**: examining every

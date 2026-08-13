@@ -81,6 +81,10 @@ rule. Everything else about `change:` is decided.
 
 ## Types
 
+**29. Symbolic values — parked, not rejected.** Keeping π (and `√2`, `e`) exact and unevaluated
+until forced, rather than computing digits. Fits the exact/symbolic domain; a much bigger feature
+than anything decided so far. See [types.md](types.md).
+
 **15. `float`** — still deferred. Wanted by the scientific domain for speed; `rat` was added
 2026-08-12.
 
