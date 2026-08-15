@@ -11,6 +11,7 @@ use ahpcl_syntax::ast::*;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
+use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate, OptimizationLevel};
@@ -86,6 +87,26 @@ fn emit_object(module: &Module, path: &Path) -> Result<(), Unsupported> {
             CodeModel::Default,
         )
         .ok_or_else(|| Unsupported::new("could not create an LLVM target machine"))?;
+
+    // Invalid IR is a compiler bug, and an unoptimised build hides it: a struct field
+    // built at the wrong width still round-trips, then becomes a crash the moment the
+    // optimiser believes the types. Verifying here turns that into a message.
+    module
+        .verify()
+        .map_err(|e| Unsupported::new(format!("generated invalid LLVM IR: {}", e.to_string())))?;
+
+    // The middle-end pipeline. Without it the IR reaches instruction selection almost
+    // as written: every variable is a stack slot, loaded and stored on every access,
+    // with no constant folding or dead-code removal.
+    //
+    // Safe for AHPCL specifically because there is no floating point anywhere — the
+    // usual worry, that an optimiser reassociates arithmetic and changes the answer,
+    // applies to floats. Integer and pointer transforms preserve meaning exactly, and
+    // the overflow checks are ordinary branches on an intrinsic's result, so they
+    // survive. The differential test is what actually holds this to account.
+    module
+        .run_passes("default<O2>", &machine, PassBuilderOptions::create())
+        .map_err(|e| Unsupported::new(format!("the optimiser failed: {e}")))?;
 
     machine
         .write_to_file(module, FileType::Object, path)
@@ -289,18 +310,41 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// A string literal as a `{ptr, len}` value pointing at constant data.
     fn str_value(&mut self, text: &str) -> BasicValueEnum<'ctx> {
         let global = self.global_string(text);
-        let len = self.int_type().const_int(text.len() as u64, false);
-        let mut v = self.str_type().get_undef();
-        v = self
-            .builder
-            .build_insert_value(v, global, 0, "str.ptr")
-            .unwrap()
-            .into_struct_value();
-        v = self
-            .builder
-            .build_insert_value(v, len, 1, "str.len")
-            .unwrap()
-            .into_struct_value();
+        // A byte length, so it matches `str_type`'s second field and the runtime's
+        // `AhpclStr` — not the `int` width.
+        let len = self.context.i64_type().const_int(text.len() as u64, false);
+        self.build_struct(self.str_type(), &[global.into(), len.into()])
+    }
+
+    /// Build a struct value, checking each field's type against the struct's.
+    ///
+    /// `build_insert_value` silently does nothing when the types disagree, leaving the
+    /// field `undef`. That is *valid* IR, so `Module::verify` does not catch it and an
+    /// unoptimised build often still works — until the optimiser takes `undef` at its
+    /// word and the program reads a garbage length. A wrong width here is a bug in this
+    /// compiler, not in anyone's program, so it fails loudly and immediately.
+    fn build_struct(
+        &self,
+        ty: inkwell::types::StructType<'ctx>,
+        fields: &[BasicValueEnum<'ctx>],
+    ) -> BasicValueEnum<'ctx> {
+        let mut v = ty.get_undef();
+        for (i, field) in fields.iter().enumerate() {
+            let want = ty
+                .get_field_type_at_index(i as u32)
+                .expect("a field at this index");
+            assert_eq!(
+                field.get_type(),
+                want,
+                "field {i} of {ty:?} was built as {:?}; the runtime reads it as {want:?}",
+                field.get_type()
+            );
+            v = self
+                .builder
+                .build_insert_value(v, *field, i as u32, "f")
+                .unwrap()
+                .into_struct_value();
+        }
         v.into()
     }
 
@@ -483,7 +527,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .add_function("ahpcl_print_array", void.fn_type(&[p.into()], false), None);
         self.module.add_function(
             "ahpcl_array_select_run",
-            ptr.fn_type(&[p.into(), p.into(), i64t.into()], false),
+            ptr.fn_type(
+                &[p.into(), p.into(), p.into(), p.into(), p.into(), i64t.into()],
+                false,
+            ),
             None,
         );
         self.module
@@ -1949,7 +1996,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Ok(out)
     }
 
-    /// One run of dimension selectors, described to the runtime as a small table.
+    /// One run of dimension selectors, described to the runtime as parallel arrays.
+    ///
+    /// Deliberately not one array of a shared struct: LLVM and Rust disagree about where
+    /// an `i128` sits inside a struct, so the fields landed at different offsets on each
+    /// side and every selector but `:all;` read garbage. Flat arrays of one primitive
+    /// each have no layout to agree on.
     fn apply_run(
         &mut self,
         current: BasicValueEnum<'ctx>,
@@ -1958,92 +2010,77 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if run.is_empty() {
             return Ok(current);
         }
-        let i64t = self.int_type();
-        let desc = self.selector_type();
-        let table = self.alloca_array("sels", desc.into(), run.len());
+        let n = run.len();
+        let value = self.int_type();
+        let u32t = self.context.i32_type();
+        let u64t = self.context.i64_type();
 
-        for (n, sel) in run.iter().enumerate() {
-            let slot = unsafe {
-                self.builder
-                    .build_gep(desc, table, &[i64t.const_int(n as u64, false)], "sel")
-                    .unwrap()
-            };
-            let (kind, from, to, by, indices, count) = match sel {
+        let kinds = self.alloca_array("sel.kinds", u32t.into(), n);
+        let bounds = self.alloca_array("sel.bounds", value.into(), n * 3);
+        let buffers = self.alloca_array("sel.bufs", self.ptr().into(), n);
+        let counts = self.alloca_array("sel.counts", u64t.into(), n);
+
+        let at = |cg: &Self, base, ty: inkwell::types::BasicTypeEnum<'ctx>, k: usize| unsafe {
+            cg.builder
+                .build_gep(ty, base, &[cg.context.i64_type().const_int(k as u64, false)], "at")
+                .unwrap()
+        };
+
+        for (k, sel) in run.iter().enumerate() {
+            let (kind, from, to, by, buffer, count) = match sel {
                 Selector::All => (0u64, None, None, None, None, 0u64),
                 Selector::Indices(ix) => {
-                    let buffer = self.alloca_array("picks", i64t.into(), ix.len());
-                    for (k, e) in ix.iter().enumerate() {
+                    let list = self.alloca_array("sel.ix", value.into(), ix.len());
+                    for (j, e) in ix.iter().enumerate() {
                         let v = self.expr(e, Native::Int)?;
-                        let at = unsafe {
-                            self.builder
-                                .build_gep(i64t, buffer, &[i64t.const_int(k as u64, false)], "pick")
-                                .unwrap()
-                        };
-                        self.builder.build_store(at, v).unwrap();
+                        let slot = at(self, list, value.into(), j);
+                        self.builder.build_store(slot, v).unwrap();
                     }
-                    (1, None, None, None, Some(buffer), ix.len() as u64)
+                    (1, None, None, None, Some(list), ix.len() as u64)
                 }
                 Selector::Range { from, to, by } => {
                     let f = self.expr(from, Native::Int)?;
                     let t = self.expr(to, Native::Int)?;
                     let b = match by {
                         Some(e) => self.expr(e, Native::Int)?,
-                        None => i64t.const_int(1, true).into(),
+                        None => value.const_int(1, true).into(),
                     };
                     (2, Some(f), Some(t), Some(b), None, 0)
                 }
-                // Flushed by the caller, never reaching a run.
+                // Flushed by the caller, so these never reach a run.
                 Selector::Length | Selector::Shape => (0, None, None, None, None, 0),
             };
 
-            let store = |cg: &Self, field: u32, v: BasicValueEnum<'ctx>| {
-                let at = cg
-                    .builder
-                    .build_struct_gep(desc, slot, field, "sel.f")
-                    .unwrap();
-                cg.builder.build_store(at, v).unwrap();
-            };
-            store(self, 0, self.context.i32_type().const_int(kind, false).into());
-            store(self, 1, self.context.i32_type().const_zero().into());
-            store(self, 2, from.unwrap_or_else(|| i64t.const_zero().into()));
-            store(self, 3, to.unwrap_or_else(|| i64t.const_zero().into()));
-            store(self, 4, by.unwrap_or_else(|| i64t.const_zero().into()));
-            store(
-                self,
-                5,
-                indices
-                    .map(|p| p.into())
-                    .unwrap_or_else(|| self.ptr().const_null().into()),
-            );
-            store(self, 6, self.context.i64_type().const_int(count, false).into());
+            let slot = at(self, kinds, u32t.into(), k);
+            self.builder.build_store(slot, u32t.const_int(kind, false)).unwrap();
+
+            let zero = value.const_zero().into();
+            for (offset, v) in [from, to, by].into_iter().enumerate() {
+                let slot = at(self, bounds, value.into(), k * 3 + offset);
+                self.builder.build_store(slot, v.unwrap_or(zero)).unwrap();
+            }
+
+            let slot = at(self, buffers, self.ptr().into(), k);
+            let p = buffer.unwrap_or_else(|| self.ptr().const_null());
+            self.builder.build_store(slot, p).unwrap();
+
+            let slot = at(self, counts, u64t.into(), k);
+            self.builder.build_store(slot, u64t.const_int(count, false)).unwrap();
         }
 
-        let n = i64t.const_int(run.len() as u64, false);
+        let n = value.const_int(n as u64, false);
         self.call_runtime(
             "ahpcl_array_select_run",
-            &[current.into(), table.into(), n.into()],
+            &[
+                current.into(),
+                kinds.into(),
+                bounds.into(),
+                buffers.into(),
+                counts.into(),
+                n.into(),
+            ],
         )
         .ok_or_else(|| Unsupported::new("a selector"))
-    }
-
-    /// The layout of `AhpclSelector` in the runtime.
-    fn selector_type(&self) -> inkwell::types::StructType<'ctx> {
-        let i32t = self.context.i32_type();
-        let value = self.int_type();
-        self.context.struct_type(
-            &[
-                i32t.into(),
-                i32t.into(),
-                // Bounds are values, so they follow the `int` width.
-                value.into(),
-                value.into(),
-                value.into(),
-                self.ptr().into(),
-                // `count` is how many indices follow, not one of them.
-                self.context.i64_type().into(),
-            ],
-            false,
-        )
     }
 
     /// Arithmetic where at least one side is a bare array reference, which Rule A

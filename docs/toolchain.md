@@ -188,3 +188,38 @@ dev-dependency is **not** sufficient: that builds the rlib, while linking needs 
 Without that step the tests link whatever `libahpcl_runtime.a` was last left in `target/`,
 so a broken runtime passes unnoticed — verified by injecting a fault into `ahpcl_rat_mul`
 and watching the suite stay green until the build step was added.
+
+## LLVM optimisation — **DECIDED**
+
+Generated code runs the standard `default<O2>` middle-end pipeline before instruction
+selection. Until 2026-08-13 only the *target machine* was set to `OptimizationLevel::Default`,
+which governs instruction selection and register allocation; no IR passes ran at all, so
+every variable stayed a stack slot loaded and stored on every access. Enabling the pipeline
+made a 20-million-iteration accumulate loop about four times faster.
+
+Optimising is safe for AHPCL for a specific reason: **there is no floating point anywhere.**
+The usual fear — that an optimiser reassociates arithmetic and changes the answer — is a
+floating-point problem. Integer and pointer transforms preserve meaning exactly, and the
+overflow checks are ordinary branches on an intrinsic's result, so they survive. The
+differential test is what holds this to account rather than the argument above.
+
+### What enabling it exposed
+
+Turning passes on broke nine tests, and in both cases the bug was already in the tree —
+the unoptimised build was hiding it.
+
+1. A string's length was built as an `i128` while `str_type`'s field, and the runtime's
+   `AhpclStr`, are 64-bit. `build_insert_value` **silently does nothing** when the types
+   disagree, leaving the field `undef`. That is *valid* IR, so `Module::verify` does not
+   catch it — the optimiser simply took `undef` at its word. `build_struct` now asserts
+   each field's type, which turns it into an immediate compiler panic.
+2. The selector run was passed as an array of a shared `repr(C)` struct containing `i128`.
+   LLVM aligns `i128` to 8 inside a struct where Rust aligns it to 16, so every field after
+   the first two sat at a different offset on each side. `:all;` kept working because it
+   ignores its fields, which made it look like a selector bug rather than a layout one.
+   Selectors now cross the boundary as **parallel arrays of a single primitive**, which have
+   no layout left to disagree about.
+
+Both are the same underlying mistake, and the third and fourth time it has appeared: the
+compiler and the runtime holding different opinions about a shared layout, with nothing
+that fails at build time. Prefer flat arrays of one primitive over a shared struct.
