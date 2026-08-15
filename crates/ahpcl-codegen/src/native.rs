@@ -49,6 +49,7 @@ pub fn compile(program: &Program, object_path: &Path, module_name: &str) -> Resu
         fn_params: HashMap::new(),
         current_ret: Native::None,
         handbacks: Vec::new(),
+        owned_from: 0,
         continues: Vec::new(),
         temporaries: Vec::new(),
         digits: DEFAULT_DIGITS,
@@ -134,6 +135,10 @@ struct Codegen<'ctx, 'a> {
     /// Where `handback` should put its value. A function returns; a conditional used as
     /// a value stores into a slot; a loop used as a value appends to an array.
     handbacks: Vec<Handback<'ctx>>,
+    /// The first scope frame the current function owns. Frames below it hold the
+    /// parameters, which are *borrowed* from the caller — releasing those frees the
+    /// caller's value out from under it.
+    owned_from: usize,
     /// Where `handback` jumps to end an iteration: the innermost loop's advance block.
     continues: Vec<inkwell::basic_block::BasicBlock<'ctx>>,
     /// Heap values the current statement produced — arrays and boxed `num`s. Anything
@@ -771,8 +776,19 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 );
         }
 
+        // Parameters live in the frame just pushed; the body gets its own. Only the
+        // body's frame is this function's to release.
+        self.vars.push(HashMap::new());
+        self.var_types.push(HashMap::new());
+        let outer_owned = self.owned_from;
+        self.owned_from = self.vars.len() - 1;
+
         let terminated = self.block(&f.body)?;
         if !terminated {
+            // Before the implicit return, not after: once the return is emitted the
+            // block is terminated and there is nowhere left to release. Doing it
+            // afterwards silently leaked every counted local of every call.
+            self.release_scope();
             match native_base(&f.returns)? {
                 Native::None => {
                     self.builder.build_return(None).unwrap();
@@ -804,6 +820,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
         }
 
+        self.owned_from = outer_owned;
+        self.vars.pop();
+        self.var_types.pop();
         self.vars.pop();
         self.var_types.pop();
         self.current = None;
@@ -827,6 +846,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .collect();
         let terminated = self.block(&top)?;
         if !terminated {
+            // Top-level variables, released before main returns.
+            self.release_scope();
             let zero = self.context.i32_type().const_zero();
             self.builder.build_return(Some(&zero)).unwrap();
         }
@@ -935,19 +956,34 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .unwrap_or(true)
     }
 
+    /// Release every live scope, innermost first — for a `handback` that leaves the
+    /// whole call rather than one block.
+    fn release_all_scopes(&mut self) {
+        for depth in (self.owned_from..self.vars.len()).rev() {
+            self.release_scope_at(depth);
+        }
+    }
+
     /// Release the arrays held by the innermost scope's variables, as it ends.
     fn release_scope(&mut self) {
+        if self.vars.is_empty() {
+            return;
+        }
+        self.release_scope_at(self.vars.len() - 1);
+    }
+
+    fn release_scope_at(&mut self, depth: usize) {
         if self.at_terminated_block() {
             return;
         }
         let held: Vec<(PointerValue<'ctx>, Native)> = self
             .vars
-            .last()
+            .get(depth)
             .map(|frame| {
                 frame
                     .iter()
                     .filter_map(|(name, slot)| {
-                        let repr = self.var_types.last()?.get(name).copied()?;
+                        let repr = self.var_types.get(depth)?.get(name).copied()?;
                         repr.is_counted().then_some((*slot, repr))
                     })
                     .collect()
@@ -1101,12 +1137,24 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(false)
             }
             Stmt::Handback { value, .. } => {
+                // Everything this statement builds has to be released *here*, before the
+                // branch: once it has jumped there is no block left to put a release in,
+                // and the previous approach — forgetting them — leaked once per
+                // iteration of any loop containing a `handback`.
+                let mark = self.temporaries.len();
                 // Inside a conditional or loop used as a value, `handback` contributes
                 // to that value rather than leaving the function.
                 match self.handbacks.last().copied() {
                     Some(Handback::Store(slot, repr, merge)) => {
                         let v = self.expr(value, repr)?;
+                        // The slot outlives this statement, so the value escapes.
+                        if repr.is_counted() {
+                            let handle = self.counted_handle(v, repr);
+                            self.call_runtime(repr.retain_fn(), &[handle.into()]);
+                        }
                         self.builder.build_store(slot, v).unwrap();
+                        self.release_temporaries(mark);
+                        self.release_scope();
                         self.builder.build_unconditional_branch(merge).unwrap();
                         return Ok(true);
                     }
@@ -1116,6 +1164,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         // the parent's shape grow a dimension.
                         if elem.is_array() {
                             self.call_runtime("ahpcl_array_push_array", &[array.into(), v.into()]);
+                            // The push copies the elements, so nothing escapes.
+                            self.release_temporaries(mark);
+                            self.release_scope();
                             if let Some(step) = self.continues.last().copied() {
                                 self.builder.build_unconditional_branch(step).unwrap();
                                 return Ok(true);
@@ -1150,6 +1201,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                                 self.call_runtime(name, &[array.into(), v.into()]);
                             }
                         }
+                        // Every `push` copies the value into the collecting array, so
+                        // the temporary is this statement's to release as usual.
+                        self.release_temporaries(mark);
+                        self.release_scope();
                         // `handback` hands the value to whatever collects it and ends
                         // the unit that produced it — one iteration here, the whole
                         // call in a function. Falling through instead would run the
@@ -1166,11 +1221,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let ret = function.get_type().get_return_type();
                 match ret {
                     None => {
+                        self.release_temporaries(mark);
+                        self.release_all_scopes();
                         self.builder.build_return(None).unwrap();
                     }
                     Some(_) => {
                         let native = self.current_ret;
                         let v = self.expr(value, native)?;
+                        // Returned, so the caller owns it and it must outlive the frames
+                        // released below.
+                        if native.is_counted() {
+                            let handle = self.counted_handle(v, native);
+                            self.call_runtime(native.retain_fn(), &[handle.into()]);
+                        }
+                        self.release_temporaries(mark);
+                        self.release_all_scopes();
                         self.builder.build_return(Some(&v)).unwrap();
                     }
                 }
@@ -1504,7 +1569,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
                 self.builder.build_unconditional_branch(cond_bb).unwrap();
                 self.builder.position_at_end(cond_bb);
+                // The condition is re-evaluated every iteration, so whatever it builds
+                // must be released every iteration too. Left to the enclosing statement,
+                // the release landed once in `done_bb` after the loop had finished.
+                let mark = self.temporaries.len();
                 let c = self.expr(condition, Native::Bool)?;
+                self.release_temporaries(mark);
                 self.builder
                     .build_conditional_branch(c.into_int_value(), body_bb, done_bb)
                     .unwrap();
@@ -1756,7 +1826,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         let tag = match op {
             UnOp::Neg => 0u64,
             UnOp::Abs => 1,
-            UnOp::Sqrt => 2,
+            UnOp::Sqrt => {
+                // Matches the interpreter: more places than AHPCL computes is an error.
+                const SQRT_MAX_DIGITS: u32 = 18;
+                if self.digits > SQRT_MAX_DIGITS {
+                    return Err(Unsupported::new(format!(
+                        "a square root to {} places, which is more than the {SQRT_MAX_DIGITS} \
+                         AHPCL computes",
+                        self.digits
+                    )));
+                }
+                2
+            }
             UnOp::Floor => 3,
             UnOp::Ceil => 4,
             UnOp::Sin => 5,

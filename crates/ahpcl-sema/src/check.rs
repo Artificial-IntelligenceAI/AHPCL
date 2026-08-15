@@ -131,6 +131,30 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// An irrational computed to more places than AHPCL knows is an error, not a silent
+    /// approximation — types.md is explicit about it. Checking here rather than at run
+    /// time means both paths agree and the message names the program's mistake, instead
+    /// of the backend declining and blaming itself for a missing feature.
+    fn check_irrational_digits(
+        &mut self,
+        expected: Option<&Type>,
+        span: Span,
+        limit: u32,
+        lead: &str,
+    ) {
+        let Some(Precision::Digits(asked)) = expected.and_then(|t| t.precision.clone()) else {
+            return;
+        };
+        if asked > limit {
+            self.err(
+                E_OVERFLOW,
+                span,
+                format!("{lead} {limit} decimal places; {asked} were asked for."),
+                format!("ask for at most {limit}, or drop the digit count."),
+            );
+        }
+    }
+
     fn var_decl(&mut self, v: &VarDecl) {
         for binding in &v.bindings {
             let Some(mut ty) = from_type_ref(&v.ty, binding.shape.as_ref(), binding.precision.as_ref())
@@ -384,6 +408,7 @@ impl<'a> Checker<'a> {
             ExprKind::Str(_) => Some(Type::scalar(Base::Str)),
             ExprKind::Number(text) => self.literal(text, e.span, expected),
             ExprKind::Constant(_) => {
+                self.check_irrational_digits(expected, e.span, 36, "this constant is known to");
                 // π, e and τ are irrational, so they are polymorphic until pinned.
                 match expected {
                     Some(t) if t.base.is_numeric() => Some(t.clone()),
@@ -404,7 +429,17 @@ impl<'a> Checker<'a> {
                 Some(t)
             }
             ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, e.span, expected),
-            ExprKind::Unary { op, operand } => self.unary(*op, operand, e.span, expected),
+            ExprKind::Unary { op, operand } => {
+                if *op == UnOp::Sqrt {
+                    self.check_irrational_digits(
+                        expected,
+                        e.span,
+                        18,
+                        "AHPCL computes square roots to",
+                    );
+                }
+                self.unary(*op, operand, e.span, expected)
+            }
             ExprKind::Call { name, args } => self.call(name, args, e.span),
             ExprKind::Builtin { name, args } => self.builtin(name, args, e.span, expected),
             ExprKind::ArrayLit(items) => self.array_literal(items, e.span, expected),

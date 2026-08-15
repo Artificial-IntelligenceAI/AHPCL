@@ -51,6 +51,10 @@ pub struct Array {
     pub items: Vec<Cell>,
     pub shape: Vec<u64>,
     pub kind: u32,
+    /// Rows collected so far, and the shape each one had, while a nested comprehension
+    /// is building this array. Meaningless otherwise.
+    pub rows: u64,
+    pub row_shape: Vec<u64>,
     /// How many places hold this array. Freed when it reaches zero.
     ///
     /// Counting is exact here rather than approximate: an array holds only scalars, so
@@ -61,7 +65,7 @@ pub struct Array {
 impl Array {
     fn vector(items: Vec<Cell>, kind: u32) -> Array {
         let n = items.len() as u64;
-        Array { items, shape: vec![n], kind, count: 1 }
+        Array { items, shape: vec![n], kind, count: 1, rows: 0, row_shape: Vec::new() }
     }
 
     /// Hand an array to generated code, owned by whoever receives it.
@@ -113,14 +117,14 @@ pub unsafe extern "C" fn ahpcl_array_new(kind: u32, rank: u32, dims: *const u64)
         std::slice::from_raw_parts(dims, rank as usize).to_vec()
     };
     let total: u64 = shape.iter().product();
-    Array { items: vec![zero(kind); total as usize], shape, kind, count: 1 }.hand_out()
+    Array { items: vec![zero(kind); total as usize], shape, kind, count: 1, rows: 0, row_shape: Vec::new() }.hand_out()
 }
 
 /// An array with no elements yet, for a loop that collects its handbacks. The shape is
 /// filled in as elements arrive, since the count is not known before the loop runs.
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_array_empty(kind: u32) -> *mut Array {
-    Array { items: Vec::new(), shape: vec![0], kind, count: 1 }.hand_out()
+    Array { items: Vec::new(), shape: vec![0], kind, count: 1, rows: 0, row_shape: Vec::new() }.hand_out()
 }
 
 unsafe fn push(a: *mut Array, c: Cell) {
@@ -169,15 +173,25 @@ pub unsafe extern "C" fn ahpcl_array_push_array(a: *mut Array, child: *const Arr
     let a = &mut *a;
     if a.items.is_empty() {
         a.kind = child.kind;
+        a.rows = 0;
+        a.row_shape = child.shape.clone();
+    } else if a.row_shape != child.shape {
+        // Every row must be the same shape, or there is no rectangle to describe. The
+        // count used to be derived from the *last* row, so ragged input produced a shape
+        // that quietly disagreed with the elements — and, rounding down, could claim
+        // fewer elements than were actually stored.
+        fail_with(
+            "AHPCL-RUN-0001",
+            &format!(
+                "every iteration must hand back the same shape, but one gave {:?} and another {:?}",
+                a.row_shape, child.shape
+            ),
+        );
     }
     a.items.extend(child.items.iter().cloned());
-    let rows = if child.items.is_empty() {
-        0
-    } else {
-        a.items.len() / child.items.len()
-    };
-    let mut shape = vec![rows as u64];
-    shape.extend(child.shape.iter().copied());
+    a.rows += 1;
+    let mut shape = vec![a.rows];
+    shape.extend(a.row_shape.iter().copied());
     a.shape = shape;
 }
 
@@ -485,7 +499,7 @@ pub unsafe extern "C" fn ahpcl_array_select_run(
     let mut items = Vec::new();
     let mut counter = vec![0usize; picks.len()];
     if picks.iter().any(Vec::is_empty) {
-        return Array { items, shape: vec![0], kind: a.kind, count: 1 }.hand_out();
+        return Array { items, shape: vec![0], kind: a.kind, count: 1, rows: 0, row_shape: Vec::new() }.hand_out();
     }
     loop {
         let offset: usize = counter
@@ -504,7 +518,7 @@ pub unsafe extern "C" fn ahpcl_array_select_run(
                     .filter(|(_, c)| !**c)
                     .map(|(p, _)| p.len() as u64)
                     .collect();
-                return Array { items, shape, kind: a.kind, count: 1 }.hand_out();
+                return Array { items, shape, kind: a.kind, count: 1, rows: 0, row_shape: Vec::new() }.hand_out();
             }
             d -= 1;
             counter[d] += 1;
@@ -685,7 +699,7 @@ pub unsafe extern "C" fn ahpcl_array_elementwise(
     };
     let shape = if x.items.len() == 1 { y.shape.clone() } else { x.shape.clone() };
     let kind = result_kind(&items);
-    Array { items, shape, kind, count: 1 }.hand_out()
+    Array { items, shape, kind, count: 1, rows: 0, row_shape: Vec::new() }.hand_out()
 }
 
 fn result_kind(items: &[Cell]) -> u32 {
@@ -764,7 +778,7 @@ pub unsafe extern "C" fn ahpcl_array_compare(
         )
     };
     let shape = if x.items.len() == 1 { y.shape.clone() } else { x.shape.clone() };
-    Array { items, shape, kind: KIND_BOOL, count: 1 }.hand_out()
+    Array { items, shape, kind: KIND_BOOL, count: 1, rows: 0, row_shape: Vec::new() }.hand_out()
 }
 
 /// `⊙` — elementwise multiplication, which requires shapes to match exactly.
@@ -802,7 +816,7 @@ pub unsafe extern "C" fn ahpcl_array_dot(a: *const Array, b: *const Array) -> *m
             total = arith(OP_ADD, &total, &arith(OP_MUL, p, q));
         }
         let kind = result_kind(std::slice::from_ref(&total));
-        return Array { items: vec![total], shape: vec![1], kind, count: 1 }.hand_out();
+        return Array { items: vec![total], shape: vec![1], kind, count: 1, rows: 0, row_shape: Vec::new() }.hand_out();
     }
     matmul(x, y)
 }
@@ -829,7 +843,7 @@ fn matmul(x: &Array, y: &Array) -> *mut Array {
         }
     }
     let kind = result_kind(&items);
-    Array { items, shape: vec![m as u64, n as u64], kind, count: 1 }.hand_out()
+    Array { items, shape: vec![m as u64, n as u64], kind, count: 1, rows: 0, row_shape: Vec::new() }.hand_out()
 }
 
 /// `×` — cross product, defined only for two 3-element vectors.
@@ -864,7 +878,7 @@ pub unsafe extern "C" fn ahpcl_array_tensor(a: *const Array, b: *const Array) ->
     }
     let shape: Vec<u64> = x.shape.iter().chain(&y.shape).copied().collect();
     let kind = result_kind(&items);
-    Array { items, shape, kind, count: 1 }.hand_out()
+    Array { items, shape, kind, count: 1, rows: 0, row_shape: Vec::new() }.hand_out()
 }
 
 /// Sum every element, for Rule A: a bare array reference in arithmetic reduces to the
@@ -1065,7 +1079,7 @@ pub unsafe extern "C" fn ahpcl_array_unary(op: u32, a: *const Array, digits: u32
     let a = &*a;
     let items: Vec<Cell> = a.items.iter().map(|c| unary(op, c, digits)).collect();
     let kind = result_kind(&items);
-    Array { items, shape: a.shape.clone(), kind, count: 1 }.hand_out()
+    Array { items, shape: a.shape.clone(), kind, count: 1, rows: 0, row_shape: Vec::new() }.hand_out()
 }
 
 #[no_mangle]
@@ -1137,8 +1151,8 @@ mod tests {
     #[test]
     fn matrix_multiplication_uses_the_inner_dimension() {
         unsafe {
-            let a = Array { items: ints(&[1, 2, 3, 4]).items, shape: vec![2, 2], kind: KIND_INT, count: 1 };
-            let b = Array { items: ints(&[5, 6, 7, 8]).items, shape: vec![2, 2], kind: KIND_INT, count: 1 };
+            let a = Array { items: ints(&[1, 2, 3, 4]).items, shape: vec![2, 2], kind: KIND_INT, count: 1, rows: 0, row_shape: Vec::new() };
+            let b = Array { items: ints(&[5, 6, 7, 8]).items, shape: vec![2, 2], kind: KIND_INT, count: 1, rows: 0, row_shape: Vec::new() };
             let out = &*ahpcl_array_dot(&a, &b);
             assert_eq!(
                 out.items,
@@ -1202,7 +1216,7 @@ mod tests {
             let m = Array {
                 items: ints(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]).items,
                 shape: vec![3, 4],
-                kind: KIND_INT, count: 1 };
+                kind: KIND_INT, count: 1, rows: 0, row_shape: Vec::new() };
             let row = &*select_indices(&m, &[2]);
             assert_eq!(row.shape, vec![4]);
             assert_eq!(

@@ -284,7 +284,9 @@ fn a_condition_must_be_a_bool() {
 #[test]
 fn infnum_takes_digits_not_bits() {
     rejects("var:infnum 'x' [64 bit] = '1'.", "AHPCL-PREC-0002");
-    clean("var:infnum 'x' [100 digits] = math { pi }.");
+    // Within what AHPCL knows: asking for more places than that is its own error,
+    // checked below.
+    clean("var:infnum 'x' [30 digits] = math { pi }.");
 }
 
 #[test]
@@ -399,4 +401,14 @@ fn too_many_selectors_for_the_rank_is_an_error() {
          var:int 'v' = math { ('a'):1;:1; }.",
         "AHPCL-SHAPE-0001",
     );
+}
+
+#[test]
+fn asking_for_more_places_than_are_known_is_rejected() {
+    // types.md: an irrational computed past what AHPCL knows is an error, not a silent
+    // approximation. It used to be caught at run time for constants and not at all for
+    // square roots, which quietly returned 18 places under a request for 30.
+    rejects("var:infnum 'x' [40 digits] = math { pi }.", "AHPCL-PREC-0004");
+    rejects("var:infnum 'x' [30 digits] = math { sqrt 2 }.", "AHPCL-PREC-0004");
+    clean("var:infnum 'x' [18 digits] = math { sqrt 2 }.");
 }

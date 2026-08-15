@@ -312,3 +312,33 @@ Two functions hand back owned text through an out-pointer rather than returning 
 (`ahpcl_read_file`, `ahpcl_array_get_str`), so the ownership hook on `call_runtime` cannot
 see them and they record their result explicitly. Any future runtime function that hands
 back memory through an out-pointer needs the same.
+
+## Releasing before a branch, and what a function does not own
+
+Two rules, both learned by getting them wrong:
+
+**Release before the terminator, never after.** `handback` and a function's implicit
+return both end a block. Anything emitted afterwards would land after a terminator and be
+invalid IR, so the first version simply *forgot* those temporaries and called the leak
+"bounded". Inside a loop it is not bounded: every iteration containing a `handback` leaked
+what it built. The releases are now emitted just before each branch, with the value being
+handed over retained first where it escapes.
+
+**A function does not own its parameters.** They are borrowed from the caller. Releasing
+them on return frees the caller's array out from under it — which is exactly what happened:
+`examples/showcase.ahpcl` began crashing with SIGTRAP before printing anything. Parameters
+now live in their own scope frame and `owned_from` marks where the function's own frames
+begin; only those are released.
+
+Measured, at 20k / 200k / 800k iterations: function locals, a function holding a string,
+and a `loop:while` condition are all **flat at 1MB**. A loop collecting values still grows,
+because the collected array is real data — a nested comprehension building 800k rows of
+three now costs about what the elements themselves need, against 2.8x that before.
+
+## Ragged nested comprehensions are refused
+
+`ahpcl_array_push_array` records the first row's shape and rejects any later row that
+differs. It used to derive the row count from the *last* row: ragged input produced a shape
+that disagreed with the elements, and because the division rounded down it could describe
+*fewer* elements than were stored — inner lengths 4 then 8 gave 12 items claiming to be
+1x8, silently dropping four. The interpreter had always rejected this.

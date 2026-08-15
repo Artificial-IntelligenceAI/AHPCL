@@ -855,6 +855,21 @@ impl<'a> Interpreter<'a> {
 
         let mut items = Vec::new();
         let mut counter = vec![0usize; picks.len()];
+        // A dimension that selects nothing means the result is empty, and the walk below
+        // indexes `picks[d][0]` unconditionally. Compiled code has this guard; the
+        // interpreter's copy of the same loop did not, so `('e'):all;` on an empty array
+        // panicked with a raw Rust index error — and took the differential oracle with
+        // it, since it cannot test any program containing an empty array.
+        if picks.iter().any(Vec::is_empty) {
+            let shape: Vec<usize> = picks
+                .iter()
+                .zip(&collapse)
+                .filter(|(_, c)| !**c)
+                .map(|(p, _)| p.len())
+                .collect();
+            return Ok(Value::Array(Array { items, shape }));
+        }
+
         loop {
             let offset: usize = counter
                 .iter()
@@ -1408,6 +1423,11 @@ impl<'a> Interpreter<'a> {
                     let operand = to_decimal(&reduced).ok_or_else(|| {
                         self.err(E_RUNTIME, span, "square root needs a number.", "check the operand.")
                     })?;
+                    // Capped, not refused: `want` here comes from the *width* as often as
+                    // from an explicit digit count — a `[128 bit]` decimal asks for 34
+                    // without the program ever mentioning digits. An explicit
+                    // `[N digits]` beyond the limit is caught by the checker, on both
+                    // paths, where the request is still distinguishable.
                     let exact = operand.sqrt_to(want.min(SQRT_MAX_DIGITS)).ok_or_else(|| {
                         self.err(
                             E_OVERFLOW,
