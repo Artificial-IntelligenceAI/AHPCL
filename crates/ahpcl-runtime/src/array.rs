@@ -447,6 +447,50 @@ pub unsafe extern "C" fn ahpcl_array_select_run(
     }
 }
 
+/// The 1-based flat position addressed by a run of single indices, one per dimension.
+///
+/// Writing to `('m'):2;:1;` needs the same row-major arithmetic reading uses; without it
+/// the second selector would index the flat buffer and hit the wrong cell.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_array_offset(
+    a: *const Array,
+    indices: *const i128,
+    n: i128,
+) -> i128 {
+    let a = &*a;
+    let n = n as usize;
+    if n > a.shape.len() {
+        fail_with(
+            "AHPCL-RUN-0003",
+            &format!(
+                "{n} selectors were given, but this array has {} dimension{}",
+                a.shape.len(),
+                if a.shape.len() == 1 { "" } else { "s" }
+            ),
+        );
+    }
+    let picks = std::slice::from_raw_parts(indices, n);
+    let strides: Vec<usize> = (0..a.shape.len())
+        .map(|d| a.shape[d + 1..].iter().product::<u64>().max(1) as usize)
+        .collect();
+
+    let mut offset = 0usize;
+    for (dim, &i) in picks.iter().enumerate() {
+        let extent = a.shape[dim];
+        if i < 1 || i as u128 > extent as u128 {
+            fail_with(
+                "AHPCL-RUN-0003",
+                &format!(
+                    "index {i} is out of range for dimension {} of length {extent}",
+                    dim + 1
+                ),
+            );
+        }
+        offset += (i as usize - 1) * strides[dim];
+    }
+    offset as i128 + 1
+}
+
 /// Whether a selection collapsed to a single value rather than an array.
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_array_is_scalar(a: *const Array) -> i32 {
@@ -587,6 +631,71 @@ fn result_kind(items: &[Cell]) -> u32 {
         })
         .max()
         .unwrap_or(KIND_INT)
+}
+
+/// Compare elementwise, handing back an array of bools. A one-element side broadcasts,
+/// so `('a'):all; > 2` compares every element against the same number.
+///
+/// Ordering codes match `OP_CMP_*`.
+pub const OP_CMP_EQ: u32 = 10;
+pub const OP_CMP_NE: u32 = 11;
+pub const OP_CMP_LT: u32 = 12;
+pub const OP_CMP_GT: u32 = 13;
+pub const OP_CMP_LE: u32 = 14;
+pub const OP_CMP_GE: u32 = 15;
+
+fn cell_order(a: &Cell, b: &Cell) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    if let (Cell::Str(x), Cell::Str(y)) = (a, b) {
+        return x.cmp(y);
+    }
+    // Compare as rationals, which every numeric cell converts to exactly.
+    let (x, y) = (to_rat(a), to_rat(b));
+    let (l, r) = (
+        x.num.saturating_mul(y.den),
+        y.num.saturating_mul(x.den),
+    );
+    l.cmp(&r).then(Ordering::Equal)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_array_compare(
+    op: u32,
+    a: *const Array,
+    b: *const Array,
+) -> *mut Array {
+    use std::cmp::Ordering;
+    let (x, y) = (&*a, &*b);
+    let decide = |p: &Cell, q: &Cell| {
+        let o = cell_order(p, q);
+        let yes = match op {
+            OP_CMP_EQ => o == Ordering::Equal,
+            OP_CMP_NE => o != Ordering::Equal,
+            OP_CMP_LT => o == Ordering::Less,
+            OP_CMP_GT => o == Ordering::Greater,
+            OP_CMP_LE => o != Ordering::Greater,
+            _ => o != Ordering::Less,
+        };
+        Cell::Bool(yes)
+    };
+    let items: Vec<Cell> = if x.items.len() == 1 {
+        y.items.iter().map(|q| decide(&x.items[0], q)).collect()
+    } else if y.items.len() == 1 {
+        x.items.iter().map(|p| decide(p, &y.items[0])).collect()
+    } else if shapes_agree(x, y) {
+        x.items.iter().zip(&y.items).map(|(p, q)| decide(p, q)).collect()
+    } else {
+        fail_with(
+            "AHPCL-RUN-0001",
+            &format!(
+                "comparing elementwise needs matching shapes, but these hold {} and {} elements",
+                x.items.len(),
+                y.items.len()
+            ),
+        )
+    };
+    let shape = if x.items.len() == 1 { y.shape.clone() } else { x.shape.clone() };
+    Array { items, shape, kind: KIND_BOOL }.hand_out()
 }
 
 /// `⊙` — elementwise multiplication, which requires shapes to match exactly.

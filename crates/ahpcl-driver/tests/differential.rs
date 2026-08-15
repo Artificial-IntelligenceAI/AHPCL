@@ -239,6 +239,21 @@ const CASES: &[(&str, &str)] = &[
          print[('b')].\nprint[('d')].\nprint[('e')].\nprint[('m')].",
     ),
     (
+        // The last three gaps the backend used to decline outright.
+        "nna_text_arrays",
+        // Not indexed: what an `nna` element narrows to is still open (types.md), and
+        // the checker currently calls it `nna` rather than `str`.
+        "var:nna 'names' = {\"hello\", \"John Doe\", \"Lol😂\"}.\n\
+         print[('names')].",
+    ),
+    (
+        "chained_element_assignment",
+        "var:matrix:int 'm' [2,3] = {{'1','2','3'},{'4','5','6'}}.\n\
+         change:var:int 'm':2;:1; = '99'.\n\
+         change:var:int 'm':1;:3; = '7'.\n\
+         print[('m')].",
+    ),
+    (
         "powers_stay_exact",
         "var:deci 'a' = '1.1'.\n\
          var:deci 'p' = math { ('a') xx 20 }.\n\

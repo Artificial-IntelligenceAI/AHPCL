@@ -409,6 +409,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             None,
         );
         self.module.add_function(
+            "ahpcl_array_offset",
+            i64t.fn_type(&[p.into(), p.into(), i64t.into()], false),
+            None,
+        );
+        self.module.add_function(
+            "ahpcl_array_compare",
+            ptr.fn_type(&[u32t.into(), p.into(), p.into()], false),
+            None,
+        );
+        self.module.add_function(
             "ahpcl_array_unary",
             ptr.fn_type(&[u32t.into(), p.into(), u32t.into()], false),
             None,
@@ -846,15 +856,45 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         if !held.is_array() {
                             return Err(Unsupported::new("a selector on a value that is not an array"));
                         }
-                        let [Selector::Indices(ix)] = &target.selectors[..] else {
-                            return Err(Unsupported::new("this form of element assignment"));
-                        };
-                        let [index] = &ix[..] else {
-                            return Err(Unsupported::new("writing to several elements at once"));
-                        };
+                        // One single index per dimension, in order. Several indices in
+                        // one selector would write to several cells at once, which is a
+                        // different statement.
+                        let mut chain = Vec::new();
+                        for sel in &target.selectors {
+                            let Selector::Indices(ix) = sel else {
+                                return Err(Unsupported::new("this form of element assignment"));
+                            };
+                            let [index] = &ix[..] else {
+                                return Err(Unsupported::new("writing to several elements at once"));
+                            };
+                            chain.push(index);
+                        }
                         let elem = held.element();
                         let array = self.builder.build_load(self.ptr(), slot, "arr").unwrap();
-                        let i = self.expr(index, Native::Int)?;
+
+                        let i = if chain.len() == 1 {
+                            self.expr(chain[0], Native::Int)?
+                        } else {
+                            // Row-major arithmetic belongs with the shape, which only
+                            // the runtime knows.
+                            let ty = self.int_type();
+                            let buffer = self.alloca_array("wpicks", ty.into(), chain.len());
+                            for (k, e) in chain.iter().enumerate() {
+                                let v = self.expr(e, Native::Int)?;
+                                let at = unsafe {
+                                    self.builder
+                                        .build_gep(ty, buffer, &[ty.const_int(k as u64, false)], "w")
+                                        .unwrap()
+                                };
+                                self.builder.build_store(at, v).unwrap();
+                            }
+                            let n = ty.const_int(chain.len() as u64, false);
+                            self.call_runtime(
+                                "ahpcl_array_offset",
+                                &[array.into(), buffer.into(), n.into()],
+                            )
+                            .ok_or_else(|| Unsupported::new("addressing an element"))?
+                        };
                         let val = self.expr(&target.value, elem)?;
                         self.array_store_at(array, i, val, elem);
                         continue;
@@ -2070,6 +2110,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .call_runtime("ahpcl_array_elementwise", &[tag.into(), a.into(), b.into()])
                     .ok_or_else(|| Unsupported::new("elementwise arithmetic"));
             }
+            // Elementwise comparison is written in the runtime as
+            // `ahpcl_array_compare` and unit-tested there, but wiring it up here gave
+            // `{1,2,3} > 2` as `{false, true, true}` — it called 2 > 2 true — where the
+            // interpreter is right with `{false, false, true}`. Left declining until
+            // that is understood rather than shipping a wrong answer.
             other => return Err(Unsupported::new(format!("{other:?} on arrays"))),
         };
         let out = self
@@ -2560,6 +2605,9 @@ fn native_base(ty: &TypeRef) -> Result<Native, Unsupported> {
         "deci" => Ok(Native::Deci),
         "rat" => Ok(Native::Rat),
         "str" => Ok(Native::Str),
+        // `nna` is an array of text by definition — it has no rank name because it is
+        // always one-dimensional.
+        "nna" => Ok(Native::Array(Native::Str.kind_tag(), 1)),
         "num" => Ok(Native::Num),
         // `infnum` is exact and `i128`-backed, so it shares the decimal
         // representation — see the v1 bounds in docs/types.md.

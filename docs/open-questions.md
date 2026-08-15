@@ -111,6 +111,13 @@ numeric syntax, and a `/` in input is an error rather than a silent reinterpreta
 **32. Does `handback` end a loop body — DECIDED 2026-08-13: yes.** Moved to
 [syntax.md](syntax.md).
 
+**33. Elementwise array comparison gives a wrong answer natively.** `math { ('a'):all; > 2 }`
+on `{1,2,3}` should be `{false, false, true}`; the backend produced `{false, true, true}`,
+calling `2 > 2` true, as if comparing against 1. The runtime side (`ahpcl_array_compare`) is
+written and unit-tested; the fault is somewhere in wiring it up in `array_binary`. The
+backend declines the operator for now rather than shipping the wrong answer, so the
+interpreter and compiled code cannot disagree. Found by the differential test, 2026-08-13.
+
 *(Numbering has gaps where items were resolved or removed. Kept stable so references hold.)*
 
 ---
