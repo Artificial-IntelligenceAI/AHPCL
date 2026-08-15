@@ -624,3 +624,19 @@ Rejected alternatives: **the zero of the type** (`0`, `false`, `""`, `{}`) — c
 a silent default, which is the thing AHPCL avoids; and **a real "unset" value that errors on
 read** — honest, but every type gains a state and every read gains a check, for a case the
 error already prevents.
+
+## `int` is 128 bits, compiled and interpreted — **DECIDED**
+
+An AHPCL `int` is backed by a 128-bit signed integer on both paths, so it holds up to
+170141183460469231731687303715884105727. Arithmetic past that is an error, never a wrap.
+
+The backend emitted 64-bit integers until 2026-08-13, which meant anything past about
+9.2×10¹⁸ diverged: the interpreter kept computing the true value while compiled code
+wrapped silently. `99999999999 x 99999999999` gave the answer modulo 2⁶⁴.
+
+Widening the value type is only half of it. Indices, lengths and flags crossing into the
+runtime keep the width the C ABI declares — a byte length in `AhpclStr`, the `failed` flag
+on a rational, a dimension in a shape, the `parse` option bitmask. Widening those too broke
+string printing outright, because the compiler and the runtime then disagreed about the
+layout of a struct they share. **One width for values, the declared width for everything
+else**, and the two must be kept apart deliberately.

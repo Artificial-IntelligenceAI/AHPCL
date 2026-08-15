@@ -122,8 +122,12 @@ struct Codegen<'ctx, 'a> {
 }
 
 impl<'ctx, 'a> Codegen<'ctx, 'a> {
-    fn i64(&self) -> inkwell::types::IntType<'ctx> {
-        self.context.i64_type()
+    /// The machine type an AHPCL `int` lives in.
+    ///
+    /// 128 bits, matching the interpreter. At 64 the two disagreed on any value past
+    /// about 9.2×10¹⁸: the interpreter kept computing and native overflowed.
+    fn int_type(&self) -> inkwell::types::IntType<'ctx> {
+        self.context.i128_type()
     }
 
     fn bool_type(&self) -> inkwell::types::IntType<'ctx> {
@@ -157,7 +161,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             &[
                 self.context.i128_type().into(),
                 self.context.i128_type().into(),
-                self.i64().into(),
+                // `failed` is a flag, not a number the language can see.
+                self.context.i64_type().into(),
             ],
             false,
         )
@@ -171,7 +176,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Native::Rat => self.rat_type().into(),
             Native::Str => self.str_type().into(),
             Native::Array(..) | Native::Num => self.ptr().into(),
-            _ => self.i64().into(),
+            _ => self.int_type().into(),
         }
     }
 
@@ -215,14 +220,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         intrinsic: &str,
         what: &str,
     ) -> Result<inkwell::values::IntValue<'ctx>, Unsupported> {
-        let name = format!("llvm.{intrinsic}.with.overflow.i64");
+        let name = format!("llvm.{intrinsic}.with.overflow.i128");
         let function = match self.module.get_function(&name) {
             Some(f) => f,
             None => {
                 let ty = self
                     .context
-                    .struct_type(&[self.i64().into(), self.bool_type().into()], false)
-                    .fn_type(&[self.i64().into(), self.i64().into()], false);
+                    .struct_type(&[self.int_type().into(), self.bool_type().into()], false)
+                    .fn_type(&[self.int_type().into(), self.int_type().into()], false);
                 self.module.add_function(&name, ty, None)
             }
         };
@@ -270,10 +275,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     /// The text layout: a pointer into constant data or the heap, plus a byte length.
     fn str_type(&self) -> inkwell::types::StructType<'ctx> {
+        // `len` is a byte count in the runtime's `AhpclStr`, so it stays 64-bit however
+        // wide an AHPCL `int` is.
         self.context.struct_type(
             &[
                 self.context.ptr_type(inkwell::AddressSpace::default()).into(),
-                self.i64().into(),
+                self.context.i64_type().into(),
             ],
             false,
         )
@@ -282,7 +289,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// A string literal as a `{ptr, len}` value pointing at constant data.
     fn str_value(&mut self, text: &str) -> BasicValueEnum<'ctx> {
         let global = self.global_string(text);
-        let len = self.i64().const_int(text.len() as u64, false);
+        let len = self.int_type().const_int(text.len() as u64, false);
         let mut v = self.str_type().get_undef();
         v = self
             .builder
@@ -297,6 +304,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         v.into()
     }
 
+    /// A 128-bit constant, built from its two halves since `const_int` takes a `u64`.
+    fn int_const(&self, v: i128) -> BasicValueEnum<'ctx> {
+        let lo = (v as u128 & u64::MAX as u128) as u64;
+        let hi = ((v as u128) >> 64) as u64;
+        self.int_type()
+            .const_int_arbitrary_precision(&[lo, hi])
+            .into()
+    }
+
     fn rat_const(&self, num: i128, den: i128) -> BasicValueEnum<'ctx> {
         let word = |v: i128| {
             let lo = (v as u128 & u64::MAX as u128) as u64;
@@ -304,7 +320,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.context.i128_type().const_int_arbitrary_precision(&[lo, hi])
         };
         self.rat_type()
-            .const_named_struct(&[word(num).into(), word(den).into(), self.i64().const_zero().into()])
+            .const_named_struct(&[word(num).into(), word(den).into(), self.int_type().const_zero().into()])
             .into()
     }
 
@@ -326,7 +342,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// disagree silently and the call does nothing. Pointers avoid the question.
     fn declare_runtime(&mut self) {
         let i32t = self.context.i32_type();
-        let i64t = self.i64();
+        let i64t = self.int_type();
         let void = self.context.void_type();
         let p = self.context.ptr_type(AddressSpace::default());
         let i8ptr = p;
@@ -373,7 +389,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .add_function("ahpcl_read_file", void.fn_type(&[p.into(), p.into()], false), None);
         self.module.add_function(
             "ahpcl_parse_int",
-            i64t.fn_type(&[p.into(), i64t.into(), p.into(), p.into()], false),
+            i64t.fn_type(&[p.into(), self.context.i64_type().into(), p.into(), p.into()], false),
             None,
         );
         let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
@@ -520,8 +536,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let ty = void.fn_type(&[p.into(), p.into(), i64t.into()], false);
             self.module.add_function(name, ty, None);
         }
+        let i64t2 = self.context.i64_type();
         for name in ["ahpcl_parse_deci", "ahpcl_parse_rat"] {
-            let ty = void.fn_type(&[p.into(), p.into(), i64t.into(), p.into(), p.into()], false);
+            let ty =
+                void.fn_type(&[p.into(), p.into(), i64t2.into(), p.into(), p.into()], false);
             self.module.add_function(name, ty, None);
         }
         self.module.add_function(
@@ -620,7 +638,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             for p in &f.params {
                 param_reprs.push(native_base(&p.ty)?);
                 params.push(match native_base(&p.ty)? {
-                    Native::Int => self.i64().into(),
+                    Native::Int => self.int_type().into(),
                     Native::Bool => self.bool_type().into(),
                     Native::Deci => self.deci_type().into(),
                     Native::Rat => self.rat_type().into(),
@@ -630,7 +648,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 });
             }
             let fn_type = match ret_native {
-                Native::Int => self.i64().fn_type(&params, false),
+                Native::Int => self.int_type().fn_type(&params, false),
                 Native::Bool => self.bool_type().fn_type(&params, false),
                 Native::Deci => self.deci_type().fn_type(&params, false),
                 Native::Rat => self.rat_type().fn_type(&params, false),
@@ -673,7 +691,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     self.builder.build_return(None).unwrap();
                 }
                 Native::Int => {
-                    let zero = self.i64().const_zero();
+                    let zero = self.int_type().const_zero();
                     self.builder.build_return(Some(&zero)).unwrap();
                 }
                 Native::Bool => {
@@ -1158,7 +1176,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let end = whole(self.expr(to, Native::Int)?)?;
                 let step = match by {
                     Some(b) => whole(self.expr(b, Native::Int)?)?,
-                    None => self.i64().const_int(1, true),
+                    None => self.int_type().const_int(1, true),
                 };
 
                 // A step of 0 never advances, so the loop would never finish. The
@@ -1166,7 +1184,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 // than either.
                 let zero_step = self
                     .builder
-                    .build_int_compare(IntPredicate::EQ, step, self.i64().const_zero(), "step0")
+                    .build_int_compare(IntPredicate::EQ, step, self.int_type().const_zero(), "step0")
                     .unwrap();
                 let bad_bb = self.context.append_basic_block(function, "loop.badstep");
                 let ok_bb = self.context.append_basic_block(function, "loop.step.ok");
@@ -1177,7 +1195,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.fail("AHPCL-RUN-0001", "a loop step of 0 would never finish");
                 self.builder.position_at_end(ok_bb);
 
-                let slot = self.alloca(var, self.i64().into());
+                let slot = self.alloca(var, self.int_type().into());
                 self.builder.build_store(slot, start).unwrap();
 
                 let cond_bb = self.context.append_basic_block(function, "loop.cond");
@@ -1188,13 +1206,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(cond_bb);
                 let i = self
                     .builder
-                    .build_load(self.i64(), slot, "i")
+                    .build_load(self.int_type(), slot, "i")
                     .unwrap()
                     .into_int_value();
                 // Counting up while i <= end. A negative step counts down instead.
                 let up = self
                     .builder
-                    .build_int_compare(IntPredicate::SGT, step, self.i64().const_zero(), "up")
+                    .build_int_compare(IntPredicate::SGT, step, self.int_type().const_zero(), "up")
                     .unwrap();
                 let le = self
                     .builder
@@ -1235,7 +1253,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.builder.position_at_end(step_bb);
                 let cur = self
                     .builder
-                    .build_load(self.i64(), slot, "i")
+                    .build_load(self.int_type(), slot, "i")
                     .unwrap()
                     .into_int_value();
                 let next = self.builder.build_int_add(cur, step, "next").unwrap();
@@ -1298,10 +1316,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         .ok_or_else(|| Unsupported::new(format!("the literal '{text}'")))?;
                     return Ok(self.deci_const(mantissa, scale));
                 }
-                let n: i64 = text
+                // The whole `i128` range, not just what fits in a machine word: an
+                // `int` is 128 bits, so a literal that fits the type must compile.
+                let n: i128 = text
                     .parse()
                     .map_err(|_| Unsupported::new(format!("the literal '{text}'")))?;
-                Ok(self.i64().const_int(n as u64, true).into())
+                Ok(self.int_const(n))
             }
             ExprKind::Ref { name, selectors } => {
                 let Some(slot) = self.lookup(name) else {
@@ -1535,7 +1555,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             let is_neg = self
                 .builder
-                .build_int_compare(IntPredicate::SLT, v, self.i64().const_zero(), "isneg")
+                .build_int_compare(IntPredicate::SLT, v, self.int_type().const_zero(), "isneg")
                 .unwrap();
             let abs = self.builder.build_select(is_neg, neg, v, "abs").unwrap();
             return self.convert(abs, Native::Int, want);
@@ -1644,7 +1664,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // A bool is already a machine word where an int is wanted.
             (Native::Bool, Native::Int) => Ok(self
                 .builder
-                .build_int_z_extend(v.into_int_value(), self.i64(), "boolint")
+                .build_int_z_extend(v.into_int_value(), self.int_type(), "boolint")
                 .unwrap()
                 .into()),
             _ => Err(Unsupported::new(format!("converting {from:?} to {to:?}"))),
@@ -1711,7 +1731,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
     /// Allocate a runtime array of `len` elements holding `elem`.
     fn array_new(&mut self, elem: Native, dims: &[u64]) -> BasicValueEnum<'ctx> {
-        let i64t = self.i64();
+        let i64t = self.context.i64_type();
         let shape = self.alloca_array("shape", i64t.into(), dims.len().max(1));
         for (i, d) in dims.iter().enumerate() {
             let slot = unsafe {
@@ -1737,7 +1757,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         value: BasicValueEnum<'ctx>,
         elem: Native,
     ) {
-        let i = self.i64().const_int(index, false);
+        let i = self.int_type().const_int(index, false);
         self.array_store_at(array, i.into(), value, elem);
     }
 
@@ -1882,7 +1902,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
         let out = self.apply_run(current, &run)?;
         if collapses && !want.is_array() {
-            let one = self.i64().const_int(1, false);
+            let one = self.int_type().const_int(1, false);
             let v = self.array_load(out, one.into(), elem)?;
             return self.convert(v, elem, want);
         }
@@ -1898,7 +1918,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         if run.is_empty() {
             return Ok(current);
         }
-        let i64t = self.i64();
+        let i64t = self.int_type();
         let desc = self.selector_type();
         let table = self.alloca_array("sels", desc.into(), run.len());
 
@@ -1955,7 +1975,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .map(|p| p.into())
                     .unwrap_or_else(|| self.ptr().const_null().into()),
             );
-            store(self, 6, i64t.const_int(count, false).into());
+            store(self, 6, self.context.i64_type().const_int(count, false).into());
         }
 
         let n = i64t.const_int(run.len() as u64, false);
@@ -1969,16 +1989,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The layout of `AhpclSelector` in the runtime.
     fn selector_type(&self) -> inkwell::types::StructType<'ctx> {
         let i32t = self.context.i32_type();
-        let i64t = self.i64();
+        let value = self.int_type();
         self.context.struct_type(
             &[
                 i32t.into(),
                 i32t.into(),
-                i64t.into(),
-                i64t.into(),
-                i64t.into(),
+                // Bounds are values, so they follow the `int` width.
+                value.into(),
+                value.into(),
+                value.into(),
                 self.ptr().into(),
-                i64t.into(),
+                // `count` is how many indices follow, not one of them.
+                self.context.i64_type().into(),
             ],
             false,
         )
@@ -2056,7 +2078,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         // A dot product of two vectors is a single value, handed back as a
         // one-element array; read it out when the context wants a scalar.
         if op == Dot && !want.is_array() {
-            let one = self.i64().const_int(1, false);
+            let one = self.int_type().const_int(1, false);
             return self.array_load(out, one.into(), want);
         }
         Ok(out)
@@ -2136,7 +2158,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let null = self.context.ptr_type(inkwell::AddressSpace::default()).const_null();
                 let g = group.map(|p| p.into()).unwrap_or(null);
                 let d = decimal.map(|p| p.into()).unwrap_or(null);
-                let flags = self.i64().const_int(flags, false);
+                let flags = self.context.i64_type().const_int(flags, false);
 
                 match want {
                     Native::Rat => self
@@ -2419,10 +2441,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         -> Result<BasicValueEnum<'ctx>, Unsupported>
     {
         let function = self.current.expect("inside a function");
-        let acc = self.alloca("pow.acc", self.i64().into());
-        let counter = self.alloca("pow.i", self.i64().into());
-        self.builder.build_store(acc, self.i64().const_int(1, false)).unwrap();
-        self.builder.build_store(counter, self.i64().const_zero()).unwrap();
+        let acc = self.alloca("pow.acc", self.int_type().into());
+        let counter = self.alloca("pow.i", self.int_type().into());
+        self.builder.build_store(acc, self.int_type().const_int(1, false)).unwrap();
+        self.builder.build_store(counter, self.int_type().const_zero()).unwrap();
 
         let cond = self.context.append_basic_block(function, "pow.cond");
         let body = self.context.append_basic_block(function, "pow.body");
@@ -2430,21 +2452,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
         self.builder.build_unconditional_branch(cond).unwrap();
         self.builder.position_at_end(cond);
-        let i = self.builder.build_load(self.i64(), counter, "i").unwrap().into_int_value();
+        let i = self.builder.build_load(self.int_type(), counter, "i").unwrap().into_int_value();
         let more = self.builder.build_int_compare(IntPredicate::SLT, i, exp, "more").unwrap();
         self.builder.build_conditional_branch(more, body, done).unwrap();
 
         self.builder.position_at_end(body);
-        let cur = self.builder.build_load(self.i64(), acc, "acc").unwrap().into_int_value();
+        let cur = self.builder.build_load(self.int_type(), acc, "acc").unwrap().into_int_value();
         let next = self.builder.build_int_mul(cur, base, "acc.next").unwrap();
         self.builder.build_store(acc, next).unwrap();
-        let i2 = self.builder.build_load(self.i64(), counter, "i").unwrap().into_int_value();
-        let i3 = self.builder.build_int_add(i2, self.i64().const_int(1, false), "i.next").unwrap();
+        let i2 = self.builder.build_load(self.int_type(), counter, "i").unwrap().into_int_value();
+        let i3 = self.builder.build_int_add(i2, self.int_type().const_int(1, false), "i.next").unwrap();
         self.builder.build_store(counter, i3).unwrap();
         self.builder.build_unconditional_branch(cond).unwrap();
 
         self.builder.position_at_end(done);
-        Ok(self.builder.build_load(self.i64(), acc, "pow").unwrap())
+        Ok(self.builder.build_load(self.int_type(), acc, "pow").unwrap())
     }
 }
 

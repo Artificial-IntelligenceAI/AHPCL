@@ -101,8 +101,8 @@ unsafe fn push(a: *mut Array, c: Cell) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_array_push_int(a: *mut Array, v: i64) {
-    push(a, Cell::Int(v as i128));
+pub unsafe extern "C" fn ahpcl_array_push_int(a: *mut Array, v: i128) {
+    push(a, Cell::Int(v));
 }
 
 #[no_mangle]
@@ -133,8 +133,8 @@ pub unsafe extern "C" fn ahpcl_array_push_num(a: *mut Array, v: *const Cell) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_array_len(a: *const Array) -> i64 {
-    (*a).items.len() as i64
+pub unsafe extern "C" fn ahpcl_array_len(a: *const Array) -> i128 {
+    (*a).items.len() as i128
 }
 
 /// Which element type an array ended up holding, so a caller knows how to read it.
@@ -150,7 +150,7 @@ pub unsafe extern "C" fn ahpcl_array_shape(a: *const Array) -> *mut Array {
     Array::vector(items, KIND_INT).hand_out()
 }
 
-unsafe fn bounds(a: &Array, index: i64) -> usize {
+unsafe fn bounds(a: &Array, index: i128) -> usize {
     let len = a.items.len();
     if index < 1 || index as usize > len {
         fail_with(
@@ -164,14 +164,14 @@ unsafe fn bounds(a: &Array, index: i64) -> usize {
 macro_rules! accessors {
     ($set:ident, $get:ident, $variant:ident, $ct:ty, $to_cell:expr, $from_cell:expr) => {
         #[no_mangle]
-        pub unsafe extern "C" fn $set(a: *mut Array, index: i64, v: $ct) {
+        pub unsafe extern "C" fn $set(a: *mut Array, index: i128, v: $ct) {
             let a = &mut *a;
             let i = bounds(a, index);
             a.items[i] = $to_cell(v);
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn $get(a: *const Array, index: i64) -> $ct {
+        pub unsafe extern "C" fn $get(a: *const Array, index: i128) -> $ct {
             let a = &*a;
             let i = bounds(a, index);
             $from_cell(&a.items[i])
@@ -183,11 +183,11 @@ accessors!(
     ahpcl_array_set_int,
     ahpcl_array_get_int,
     Int,
-    i64,
-    |v: i64| Cell::Int(v as i128),
+    i128,
+    |v: i128| Cell::Int(v),
     |c: &Cell| match c {
-        Cell::Int(v) => *v as i64,
-        Cell::Bool(b) => *b as i64,
+        Cell::Int(v) => *v,
+        Cell::Bool(b) => *b as i128,
         _ => 0,
     }
 );
@@ -206,14 +206,14 @@ accessors!(
 );
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_array_set_deci(a: *mut Array, index: i64, v: *const AhpclDecimal) {
+pub unsafe extern "C" fn ahpcl_array_set_deci(a: *mut Array, index: i128, v: *const AhpclDecimal) {
     let a = &mut *a;
     let i = bounds(a, index);
     a.items[i] = Cell::Deci(*v);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_array_get_deci(out: *mut AhpclDecimal, a: *const Array, index: i64) {
+pub unsafe extern "C" fn ahpcl_array_get_deci(out: *mut AhpclDecimal, a: *const Array, index: i128) {
     let a = &*a;
     let i = bounds(a, index);
     *out = match &a.items[i] {
@@ -224,14 +224,14 @@ pub unsafe extern "C" fn ahpcl_array_get_deci(out: *mut AhpclDecimal, a: *const 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_array_set_rat(a: *mut Array, index: i64, v: *const AhpclRational) {
+pub unsafe extern "C" fn ahpcl_array_set_rat(a: *mut Array, index: i128, v: *const AhpclRational) {
     let a = &mut *a;
     let i = bounds(a, index);
     a.items[i] = Cell::Rat(*v);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_array_get_rat(out: *mut AhpclRational, a: *const Array, index: i64) {
+pub unsafe extern "C" fn ahpcl_array_get_rat(out: *mut AhpclRational, a: *const Array, index: i128) {
     let a = &*a;
     let i = bounds(a, index);
     *out = match &a.items[i] {
@@ -242,7 +242,7 @@ pub unsafe extern "C" fn ahpcl_array_get_rat(out: *mut AhpclRational, a: *const 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_array_set_str(a: *mut Array, index: i64, v: *const AhpclStr) {
+pub unsafe extern "C" fn ahpcl_array_set_str(a: *mut Array, index: i128, v: *const AhpclStr) {
     let text = (*v).as_str().to_string();
     let a = &mut *a;
     let i = bounds(a, index);
@@ -250,7 +250,7 @@ pub unsafe extern "C" fn ahpcl_array_set_str(a: *mut Array, index: i64, v: *cons
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_array_get_str(out: *mut AhpclStr, a: *const Array, index: i64) {
+pub unsafe extern "C" fn ahpcl_array_get_str(out: *mut AhpclStr, a: *const Array, index: i128) {
     let a = &*a;
     let i = bounds(a, index);
     let text = a.items[i].render();
@@ -259,7 +259,7 @@ pub unsafe extern "C" fn ahpcl_array_get_str(out: *mut AhpclStr, a: *const Array
 
 /// A `num` element is stored and read as the tagged cell it already is.
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_array_set_num(a: *mut Array, index: i64, v: *const Cell) {
+pub unsafe extern "C" fn ahpcl_array_set_num(a: *mut Array, index: i128, v: *const Cell) {
     let cell = (*v).clone();
     let a = &mut *a;
     let i = bounds(a, index);
@@ -267,7 +267,7 @@ pub unsafe extern "C" fn ahpcl_array_set_num(a: *mut Array, index: i64, v: *cons
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_array_get_num(a: *const Array, index: i64) -> *mut Cell {
+pub unsafe extern "C" fn ahpcl_array_get_num(a: *const Array, index: i128) -> *mut Cell {
     let a = &*a;
     let i = bounds(a, index);
     hand_out_cell(a.items[i].clone())
@@ -285,7 +285,7 @@ pub unsafe extern "C" fn ahpcl_print_array(a: *const Array) {
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_array_select(
     a: *const Array,
-    indices: *const i64,
+    indices: *const i128,
     count: u64,
 ) -> *mut Array {
     let a = &*a;
@@ -298,9 +298,9 @@ pub unsafe extern "C" fn ahpcl_array_select(
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_array_range(
     a: *const Array,
-    from: i64,
-    to: i64,
-    step: i64,
+    from: i128,
+    to: i128,
+    step: i128,
 ) -> *mut Array {
     if step == 0 {
         fail_with("AHPCL-RUN-0001", "a selector step of 0 would never advance");
@@ -326,18 +326,18 @@ pub struct AhpclSelector {
     /// 0 = `:all;`, 1 = an index list, 2 = a range.
     pub kind: u32,
     pub _pad: u32,
-    pub from: i64,
-    pub to: i64,
-    pub by: i64,
-    pub indices: *const i64,
+    pub from: i128,
+    pub to: i128,
+    pub by: i128,
+    pub indices: *const i128,
     pub count: u64,
 }
 
 /// The 0-based positions a selector picks along a dimension of `extent`, and whether
 /// the dimension collapses (a single index gives a plain value, not a 1-long slice).
 unsafe fn positions(sel: &AhpclSelector, extent: u64, dim: usize) -> (Vec<usize>, bool) {
-    let check = |i: i64| -> usize {
-        if i < 1 || i as u64 > extent {
+    let check = |i: i128| -> usize {
+        if i < 1 || i as u128 > extent as u128 {
             fail_with(
                 "AHPCL-RUN-0003",
                 &format!(
@@ -377,7 +377,7 @@ unsafe fn positions(sel: &AhpclSelector, extent: u64, dim: usize) -> (Vec<usize>
 pub unsafe extern "C" fn ahpcl_array_select_run(
     a: *const Array,
     sels: *const AhpclSelector,
-    n: u64,
+    n: i128,
 ) -> *mut Array {
     let a = &*a;
     let n = n as usize;
@@ -716,8 +716,8 @@ fn hand_out_cell(c: Cell) -> *mut Cell {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_num_from_int(v: i64) -> *mut Cell {
-    hand_out_cell(Cell::Int(v as i128))
+pub unsafe extern "C" fn ahpcl_num_from_int(v: i128) -> *mut Cell {
+    hand_out_cell(Cell::Int(v))
 }
 
 #[no_mangle]
@@ -751,15 +751,15 @@ pub unsafe extern "C" fn ahpcl_num_to_rat(out: *mut AhpclRational, a: *const Cel
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_num_to_int(a: *const Cell) -> i64 {
+pub unsafe extern "C" fn ahpcl_num_to_int(a: *const Cell) -> i128 {
     match &*a {
-        Cell::Int(v) => *v as i64,
-        Cell::Bool(b) => *b as i64,
+        Cell::Int(v) => *v,
+        Cell::Bool(b) => *b as i128,
         Cell::Deci(d) => match 10i128.checked_pow(d.scale) {
-            Some(p) => (d.mantissa / p) as i64,
+            Some(p) => d.mantissa / p,
             None => 0,
         },
-        Cell::Rat(r) => (r.num / r.den) as i64,
+        Cell::Rat(r) => r.num / r.den,
         Cell::Str(_) => 0,
     }
 }
@@ -967,7 +967,7 @@ mod tests {
         }
     }
 
-    fn sel_index(i: i64) -> AhpclSelector {
+    fn sel_index(i: i128) -> AhpclSelector {
         AhpclSelector {
             kind: 1,
             _pad: 0,
@@ -1006,7 +1006,7 @@ mod tests {
     fn selectors_are_one_based() {
         unsafe {
             let a = ints(&[10, 20, 30, 40, 50]);
-            let picked = &*ahpcl_array_select(&a, [1i64, 3].as_ptr(), 2);
+            let picked = &*ahpcl_array_select(&a, [1i128, 3].as_ptr(), 2);
             assert_eq!(picked.items, vec![Cell::Int(10), Cell::Int(30)]);
             let ranged = &*ahpcl_array_range(&a, 1, 5, 2);
             assert_eq!(ranged.items, vec![Cell::Int(10), Cell::Int(30), Cell::Int(50)]);

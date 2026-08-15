@@ -667,3 +667,39 @@ fn an_elementwise_unary_keeps_the_array() {
         "{-1, -2, -3}"
     );
 }
+
+#[test]
+fn integers_are_128_bit_natively() {
+    // The backend emitted i64, so anything past ~9.2×10¹⁸ wrapped silently while the
+    // interpreter kept computing. Both values checked against Python.
+    assert_eq!(
+        compile_and_run(
+            "int128",
+            "var:int 'a' [128 bit] = '9223372036854775807'.\n\
+             var:int 'b' [128 bit] = math { ('a') + ('a') }.\n\
+             print[('b')]."
+        ),
+        "18446744073709551614"
+    );
+    assert_eq!(
+        compile_and_run(
+            "int128mul",
+            "var:int 'a' [128 bit] = '99999999999'.\n\
+             var:int 'b' [128 bit] = math { ('a') x ('a') }.\n\
+             print[('b')]."
+        ),
+        "9999999999800000000001"
+    );
+}
+
+#[test]
+fn a_literal_may_use_the_whole_int_range() {
+    // A literal above i64::MAX used to decline native compilation outright.
+    assert_eq!(
+        compile_and_run(
+            "bigliteral",
+            "var:int 'm' [128 bit] = '170141183460469231731687303715884105727'.\nprint[('m')]."
+        ),
+        "170141183460469231731687303715884105727"
+    );
+}

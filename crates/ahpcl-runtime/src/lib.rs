@@ -526,9 +526,9 @@ pub unsafe extern "C" fn ahpcl_parse_int(
     flags: u64,
     group: *const AhpclStr,
     decimal: *const AhpclStr,
-) -> i64 {
+) -> i128 {
     let prepared = parse_prepare(text, flags, group, decimal);
-    match prepared.as_deref().and_then(|s| s.parse::<i64>().ok()) {
+    match prepared.as_deref().and_then(|s| s.parse::<i128>().ok()) {
         Some(v) => v,
         None => parse_failure(text),
     }
@@ -698,9 +698,9 @@ pub unsafe extern "C" fn ahpcl_rat_binary(
 /// `//` between decimals gives a whole number, so it hands back an int rather than a
 /// decimal — matching `Decimal::int_div` in the interpreter.
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_deci_int_div(a: *const AhpclDecimal, b: *const AhpclDecimal) -> i64 {
+pub unsafe extern "C" fn ahpcl_deci_int_div(a: *const AhpclDecimal, b: *const AhpclDecimal) -> i128 {
     let q = deci_apply(array::OP_INTDIV, *a, *b);
-    q.mantissa as i64
+    q.mantissa
 }
 
 /// π, e and τ to `digits` places, truncated then rounded — the same table and rounding
@@ -738,7 +738,7 @@ pub unsafe extern "C" fn ahpcl_constant(out: *mut AhpclDecimal, which: u32, digi
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_rat_from_int(out: *mut AhpclRational, v: i64) {
+pub unsafe extern "C" fn ahpcl_rat_from_int(out: *mut AhpclRational, v: i128) {
     *out = AhpclRational { num: v as i128, den: 1, failed: 0 };
 }
 
@@ -778,7 +778,7 @@ pub unsafe extern "C" fn ahpcl_deci_cmp(a: *const AhpclDecimal, b: *const AhpclD
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ahpcl_deci_from_int(out: *mut AhpclDecimal, v: i64) {
+pub unsafe extern "C" fn ahpcl_deci_from_int(out: *mut AhpclDecimal, v: i128) {
     *out = AhpclDecimal::ok(v as i128, 0);
 }
 
@@ -789,7 +789,7 @@ pub unsafe extern "C" fn ahpcl_print_deci(d: *const AhpclDecimal) {
 }
 
 #[no_mangle]
-pub extern "C" fn ahpcl_print_int(v: i64) {
+pub extern "C" fn ahpcl_print_int(v: i128) {
     emit(&v.to_string());
 }
 
@@ -805,7 +805,7 @@ pub extern "C" fn ahpcl_print_bool(v: i8) {
 /// interpreted. Euclidean is the one the language specifies, and a remainder that is
 /// never negative is the more useful of the two.
 #[no_mangle]
-pub extern "C" fn ahpcl_int_div(a: i64, b: i64) -> i64 {
+pub extern "C" fn ahpcl_int_div(a: i128, b: i128) -> i128 {
     if b == 0 {
         unsafe { ahpcl_fail(c"AHPCL-RUN-0002".as_ptr(), c"division by zero.".as_ptr()) }
     }
@@ -813,7 +813,7 @@ pub extern "C" fn ahpcl_int_div(a: i64, b: i64) -> i64 {
 }
 
 #[no_mangle]
-pub extern "C" fn ahpcl_int_mod(a: i64, b: i64) -> i64 {
+pub extern "C" fn ahpcl_int_mod(a: i128, b: i128) -> i128 {
     if b == 0 {
         unsafe { ahpcl_fail(c"AHPCL-RUN-0002".as_ptr(), c"remainder by zero.".as_ptr()) }
     }

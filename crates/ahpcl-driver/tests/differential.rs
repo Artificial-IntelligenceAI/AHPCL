@@ -226,6 +226,19 @@ const CASES: &[(&str, &str)] = &[
          print[('v')].",
     ),
     (
+        // Native integers were 64-bit while the interpreter was 128-bit, so anything
+        // past ~9.2×10¹⁸ diverged: the interpreter kept going, native wrapped silently
+        // and later errored. These values are checked against Python.
+        "large_integers",
+        "var:int 'a' [128 bit] = '9223372036854775807'.\n\
+         var:int 'b' [128 bit] = math { ('a') + ('a') }.\n\
+         var:int 'c' [128 bit] = '99999999999'.\n\
+         var:int 'd' [128 bit] = math { ('c') x ('c') }.\n\
+         var:int 'e' [128 bit] = math { 10 xx 30 }.\n\
+         var:int 'm' [128 bit] = '170141183460469231731687303715884105727'.\n\
+         print[('b')].\nprint[('d')].\nprint[('e')].\nprint[('m')].",
+    ),
+    (
         "powers_stay_exact",
         "var:deci 'a' = '1.1'.\n\
          var:deci 'p' = math { ('a') xx 20 }.\n\

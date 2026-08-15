@@ -102,11 +102,11 @@ state to represent and no silent 0 to explain. Rejected: the zero of the type (a
 default), and a real "unset" value (every type gains a state and every read gains a check).
 Moved to [types.md](types.md).
 
-**31. Should `parse` read a fraction?** `parse["2/6"]` into a `rat` is rejected — `parse`
-reads decimal text only, on both paths. `rat` is a first-class type with no literal form of
-its own, so `n/d` text is the obvious way to get one from input, but accepting it adds a
-second numeric syntax to `parse`. Found 2026-08-13; the backend was briefly accepting it
-while the interpreter refused, which is why this is written down rather than quietly kept.
+**31. Should `parse` read a fraction — DECIDED 2026-08-13: yes, under an option.** Not by
+default, and not never: `parse["2/6"]` reads a fraction only when asked, alongside `trim`,
+`hex`, `scientific` and the rest. Keeping it opt-in means plain `parse` still accepts one
+numeric syntax, and a `/` in input is an error rather than a silent reinterpretation.
+**Not yet implemented** — the option needs a name.
 
 **32. Does `handback` end a loop body — DECIDED 2026-08-13: yes.** Moved to
 [syntax.md](syntax.md).
