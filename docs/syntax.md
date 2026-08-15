@@ -1323,3 +1323,27 @@ is coherent. It was rejected because `handback` would then mean one thing inside
 and another inside a loop, where the chosen rule means the same thing in both. It is also
 the reversible choice: multiple values per iteration can be added later under a distinct
 keyword, whereas starting permissive and tightening would break existing programs.
+
+## `parse[… fraction]` — **DECIDED, not yet implemented**
+
+`parse` reads decimal text only. With the `fraction` option it also reads `n/d`:
+
+```
+var:rat 'r' [64 bit] = parse["2/6" fraction].   # 1/3, reduced
+```
+
+Opt-in rather than always-on, so plain `parse` accepts exactly one numeric syntax and a
+stray `/` in input stays an error instead of being silently reinterpreted as division.
+
+Rejected names: **`rational`** (names the result type, but the option describes the *input*
+syntax, and a fraction may be parsed into a `deci` too); **`ratio`** (also means the `a:b`
+form, so it would suggest `2:6` works, which it does not); **`over`** (reads naturally —
+"two over six" — but a bare preposition says little when met cold in someone else's code).
+
+### To implement
+
+- `PARSE_FRACTION` bit in `crates/ahpcl-runtime/src/lib.rs`, handled in `parse_prepare` or
+  the `ahpcl_parse_*` entry points — the runtime already reduces via `AhpclRational::reduced`.
+- `"fraction" => flags |= …` in the backend's `parse` builtin.
+- The matching option in the interpreter's `ParseOptions`, so both paths agree.
+- A case in `crates/ahpcl-driver/tests/differential.rs`.
