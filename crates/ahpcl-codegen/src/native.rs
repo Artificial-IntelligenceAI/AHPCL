@@ -428,6 +428,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.module
             .add_function("ahpcl_print_text", void.fn_type(&[p.into()], false), None);
         self.module
+            .add_function("ahpcl_clock", void.fn_type(&[p.into()], false), None);
+        self.module
             .add_function("ahpcl_str_cmp", i32t.fn_type(&[p.into(), p.into()], false), None);
         self.module
             .add_function("ahpcl_read_file", void.fn_type(&[p.into(), p.into()], false), None);
@@ -2301,6 +2303,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         .ok_or_else(|| Unsupported::new("parsing an int")),
                 }
             }
+            "clock" => self
+                .call_deci("ahpcl_clock", &[])
+                .ok_or_else(|| Unsupported::new("reading the clock")),
             other => Err(Unsupported::new(format!("the builtin '{other}'"))),
         }
     }

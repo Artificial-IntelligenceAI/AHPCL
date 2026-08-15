@@ -360,6 +360,17 @@ fn deci_div(a: AhpclDecimal, b: AhpclDecimal, digits: u32) -> AhpclDecimal {
     AhpclDecimal::ok(if negative { -m } else { m }, scale)
 }
 
+/// Seconds since the Unix epoch, to six decimal places — the same value and scale the
+/// interpreter's `clock` produces, so timing a program either way agrees.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_clock(out: *mut AhpclDecimal) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros() as i128)
+        .unwrap_or(0);
+    *out = AhpclDecimal::ok(now, 6);
+}
+
 // ── text ────────────────────────────────────────────────────────────────────
 
 /// A string: pointer and byte length, always valid UTF-8.

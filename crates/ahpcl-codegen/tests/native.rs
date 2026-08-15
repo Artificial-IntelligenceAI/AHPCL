@@ -754,3 +754,19 @@ fn raising_to_a_power_reports_overflow_rather_than_wrapping() {
         "100000000000000000000"
     );
 }
+
+#[test]
+fn the_clock_compiles_and_advances() {
+    // Needed to time a program from inside it. The two readings are seconds since the
+    // epoch, so the later one is never smaller.
+    assert_eq!(
+        compile_and_run(
+            "clockcmp",
+            "var:deci 'a' = clock[].\n\
+             var:deci 'b' = clock[].\n\
+             var:bool 'ok' = math { ('b') >= ('a') }.\n\
+             print[('ok')]."
+        ),
+        "true"
+    );
+}
