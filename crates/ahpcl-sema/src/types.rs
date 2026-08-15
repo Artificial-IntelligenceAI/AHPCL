@@ -249,6 +249,11 @@ pub fn from_type_ref(ty: &TypeRef, shape: Option<&Vec<Dim>>, precision: Option<&
         (None, None) if base == Base::Nna => Some(Shape(vec![Dim::Unknown])),
         (None, None) => None,
     };
+    // `nna` *is* a vector of text, so it is that type rather than a base of its own.
+    // Modelling it separately meant an indexed `nna` came back as `nna`, and a literal
+    // of text would not go into one — both of which needed special cases that this
+    // removes. `Base::Nna` survives only as the spelling of the word.
+    let base = if base == Base::Nna { Base::Str } else { base };
     Some(Type {
         base,
         sign: ty.sign,

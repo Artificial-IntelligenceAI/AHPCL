@@ -568,8 +568,23 @@ rectangles.
 Precision (`[n bit]`) and sign prefixes (`+`/`-`) are numeric-only, so the type grammar must
 allow types that take neither.
 
+`nna` **is** a vector of `str` — DECIDED 2026-08-13. It is not a base of its own, so
+indexing one gives a `str`:
+
+```
+var:nna 'names' = {"hello", "John Doe", "Lol😂"}.
+var:str 'second' = ('names'):2;.        # John Doe
+var:int 'n' [64 bit] = ('names'):length;.   # 3
+```
+
+Modelling it as a separate base meant `('names'):2;` came back as `nna`, so it could not be
+assigned to the `str` it plainly was, and a literal of text would not go *into* one either.
+Both needed special cases; being the type removes them. The word stays as a spelling —
+`var:nna` says "an array of text" more directly than `var:vector:str` — and it still refuses
+numbers, which is what "non-numerical" means.
+
 **OPEN:** what else `nna` may hold besides text (booleans? dates?), whether one `nna` may mix
-kinds, whether `nna` has a rank at all, and whether the summing rule makes bare `('names')`
+kinds, and whether the summing rule makes bare `('names')`
 concatenate.
 
 ## Division — **DECIDED**

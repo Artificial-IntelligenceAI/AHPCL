@@ -241,10 +241,10 @@ const CASES: &[(&str, &str)] = &[
     (
         // The last three gaps the backend used to decline outright.
         "nna_text_arrays",
-        // Not indexed: what an `nna` element narrows to is still open (types.md), and
-        // the checker currently calls it `nna` rather than `str`.
         "var:nna 'names' = {\"hello\", \"John Doe\", \"Lol😂\"}.\n\
-         print[('names')].",
+         var:str 'second' = ('names'):2;.\n\
+         var:int 'n' [64 bit] = ('names'):length;.\n\
+         print[('names')].\nprint[('second')].\nprint[('n')].",
     ),
     (
         // A comparison's result is a bool array, but its operands keep their own kinds:
