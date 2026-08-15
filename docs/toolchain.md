@@ -250,3 +250,37 @@ AHPCL had only ever asked the first.
 
 The bounds are deliberately loose — tripwires for a regression that reintroduces
 per-element allocation or scanning, not performance targets.
+
+## Array memory: reference counting — **DECIDED**
+
+An array carries a count. Storing it into a variable retains; the end of a statement
+releases whatever that statement built and nobody kept; the end of a scope releases what
+its variables held. Zero frees.
+
+Counting is exact here rather than approximate, which is why it was chosen over the
+alternatives: an array holds only scalars, so one can never contain another and a cycle
+cannot form. The rejected options were **compiler-inserted frees** (no runtime cost, but it
+needs escape analysis, and getting that wrong is a use-after-free — the one failure mode
+AHPCL avoids everywhere else) and a **per-statement arena** (fastest, but anything outliving
+the statement has to be copied out).
+
+Three things about the implementation are easy to get wrong, and each was got wrong first:
+
+- **`math { … }` is a pass-through.** Recording its result as well as its inner
+  expression's counts one array twice, so it is released twice against one retain and
+  freed while still live. Only expressions that *build* an array own one; a bare reference
+  and a `math` wrapper do not.
+- **A statement that branches away has no block to release in.** After `handback`, emitting
+  a release lands after a terminator and the IR is invalid. Those temporaries are dropped
+  from the list instead — a bounded leak on the way out of a block, which is the lesser
+  problem.
+- **The counted loop manages its scope frames by hand**, not through `scoped`, so its body
+  was never released and an array declared inside a loop leaked once per iteration.
+
+### Still outstanding
+
+`num` values are separately boxed by the runtime (`ahpcl_num_*` hands out a `Cell`), and
+that allocation class is *not* counted. A loop doing `math { ('t') + ('w') }` on an array
+still grows by about 190 bytes per iteration. Measured: 800,000 iterations went from 418MB
+to 148MB with array counting in place, so the remainder is the `num` boxes. They need the
+same treatment.

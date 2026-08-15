@@ -50,6 +50,7 @@ pub fn compile(program: &Program, object_path: &Path, module_name: &str) -> Resu
         current_ret: Native::None,
         handbacks: Vec::new(),
         continues: Vec::new(),
+        temporaries: Vec::new(),
         digits: DEFAULT_DIGITS,
         current: None,
         string_count: 0,
@@ -135,6 +136,9 @@ struct Codegen<'ctx, 'a> {
     handbacks: Vec<Handback<'ctx>>,
     /// Where `handback` jumps to end an iteration: the innermost loop's advance block.
     continues: Vec<inkwell::basic_block::BasicBlock<'ctx>>,
+    /// Arrays the current statement produced. Anything still here when the statement
+    /// ends was a temporary, and is released.
+    temporaries: Vec<BasicValueEnum<'ctx>>,
     /// How many places to compute an irrational to, from the declaration in hand.
     /// `[36 digits]` on a `var:deci` sets it for that declaration's value.
     digits: u32,
@@ -513,6 +517,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .add_function("ahpcl_array_push_int", void.fn_type(&[p.into(), i64t.into()], false), None);
         self.module
             .add_function("ahpcl_array_push_array", void.fn_type(&[p.into(), p.into()], false), None);
+        for name in ["ahpcl_array_retain", "ahpcl_array_release"] {
+            self.module.add_function(name, void.fn_type(&[p.into()], false), None);
+        }
         self.module.add_function(
             "ahpcl_array_push_bool",
             void.fn_type(&[p.into(), i8t_early.into()], false),
@@ -846,20 +853,85 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// append another.
     fn block(&mut self, stmts: &[Stmt]) -> Result<bool, Unsupported> {
         for stmt in stmts {
-            if self.statement(stmt)? {
+            // Each statement owns whatever arrays it makes. An array kept by a variable
+            // is retained when it is stored, so releasing here brings it back to the
+            // one reference the variable holds; a slice nobody kept drops to zero and
+            // is freed. Without this, a loop that slices leaks once per iteration.
+            let mark = self.temporaries.len();
+            let terminated = self.statement(stmt)?;
+            if terminated {
+                // The statement branched away — `handback`, or a return. There is no
+                // longer a block to put a release in, and emitting one would land after
+                // a terminator. Forget them instead: leaking on the way out of a block
+                // is worse than invalid IR, but only just, and it is bounded.
+                self.temporaries.truncate(mark);
                 return Ok(true);
             }
+            self.release_temporaries(mark);
         }
         Ok(false)
+    }
+
+    /// Release every array recorded since `mark`.
+    fn release_temporaries(&mut self, mark: usize) {
+        if self.at_terminated_block() {
+            self.temporaries.truncate(mark);
+            return;
+        }
+        while self.temporaries.len() > mark {
+            let v = self.temporaries.pop().expect("a recorded temporary");
+            self.call_runtime("ahpcl_array_release", &[v.into()]);
+        }
+    }
+
+    /// Note an array the current statement produced.
+    fn own(&mut self, v: BasicValueEnum<'ctx>, repr: Native) -> BasicValueEnum<'ctx> {
+        if repr.is_array() {
+            self.temporaries.push(v);
+        }
+        v
     }
 
     fn scoped(&mut self, stmts: &[Stmt]) -> Result<bool, Unsupported> {
         self.vars.push(HashMap::new());
         self.var_types.push(HashMap::new());
         let out = self.block(stmts);
+        self.release_scope();
         self.vars.pop();
         self.var_types.pop();
         out
+    }
+
+    /// Whether the builder sits in a block that has already branched away.
+    fn at_terminated_block(&self) -> bool {
+        self.builder
+            .get_insert_block()
+            .map(|b| b.get_terminator().is_some())
+            .unwrap_or(true)
+    }
+
+    /// Release the arrays held by the innermost scope's variables, as it ends.
+    fn release_scope(&mut self) {
+        if self.at_terminated_block() {
+            return;
+        }
+        let held: Vec<(PointerValue<'ctx>, Native)> = self
+            .vars
+            .last()
+            .map(|frame| {
+                frame
+                    .iter()
+                    .filter_map(|(name, slot)| {
+                        let repr = self.var_types.last()?.get(name).copied()?;
+                        repr.is_array().then_some((*slot, repr))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (slot, _) in held {
+            let v = self.builder.build_load(self.ptr(), slot, "scope.arr").unwrap();
+            self.call_runtime("ahpcl_array_release", &[v.into()]);
+        }
     }
 
     fn statement(&mut self, stmt: &Stmt) -> Result<bool, Unsupported> {
@@ -899,6 +971,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         val.get_type()
                     );
                     let slot = self.alloca(&b.name, want);
+                    if native.is_array() {
+                        self.call_runtime("ahpcl_array_retain", &[val.into()]);
+                    }
                     self.builder.build_store(slot, val).unwrap();
                     self.vars.last_mut().unwrap().insert(b.name.clone(), slot);
                     self.var_types.last_mut().unwrap().insert(b.name.clone(), native);
@@ -1357,6 +1432,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.continues.push(step_bb);
                 let terminated = self.block(&l.body);
                 self.continues.pop();
+                // The body is a scope, and it runs again and again: an array declared
+                // inside it must be released at the end of *each* iteration, or the
+                // loop grows without bound. The counted loop manages its frames by hand
+                // rather than through `scoped`, so this is easy to forget — and was.
+                self.release_scope();
                 self.vars.pop();
                 self.var_types.pop();
                 if !terminated? {
@@ -1401,6 +1481,23 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     fn expr(&mut self, e: &Expr, want: Native) -> Result<BasicValueEnum<'ctx>, Unsupported> {
+        let v = self.expr_inner(e, want)?;
+        // Anything that *builds* an array is this statement's to release. Two kinds are
+        // not: a plain reference hands back the array a variable already holds, and
+        // `math { … }` passes its inner value straight through — recording that would
+        // count one array twice and free it while it was still in use.
+        let borrowed = match &e.kind {
+            ExprKind::Ref { selectors, .. } => selectors.is_empty(),
+            ExprKind::Math(_) => true,
+            _ => false,
+        };
+        if v.is_pointer_value() && !borrowed && self.value_repr(e).is_array() {
+            self.temporaries.push(v);
+        }
+        Ok(v)
+    }
+
+    fn expr_inner(&mut self, e: &Expr, want: Native) -> Result<BasicValueEnum<'ctx>, Unsupported> {
         match &e.kind {
             ExprKind::Math(inner) => self.expr(inner, want),
             ExprKind::Number(text) | ExprKind::Literal(text) => {
