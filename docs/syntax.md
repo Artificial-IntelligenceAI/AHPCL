@@ -1274,3 +1274,52 @@ Indexing, modules, error handling, custom types.
 `invariant` (see [types.md](types.md), verification layer 4) is still a **PROPOSED** placeholder
 spelling. Indexing was written `('a')[('i')]` in discussion, which clashes with `[…]` for calls;
 unresolved.
+
+## `handback` ends the unit that produced the value — **DECIDED**
+
+One rule covers every use:
+
+> **`handback` hands its value to the nearest collector, and ends the unit of work that
+> produced it.**
+
+In a function the unit is the whole call, so the function returns. In a loop used as a
+value the unit is one iteration, so the iteration ends and the next begins.
+
+```
+var:vector:int 'v' = loop:var:int 'i' = math { 1 to 4 } {
+    if math { ('i') > 2 } {
+        handback ('i').        # ends this iteration
+    }.
+    print["tail"].             # runs only when the handback did not fire
+}.
+                               # prints tail, tail — then v is {3, 4}
+```
+
+Because it ends the block, anything written after it in that block can never run, and
+that is a compile error, `AHPCL-SYN-0002`:
+
+```
+    4 |     change:var:int 'n' = math { ('n') - 1 }.
+rule conditions: this can never run, because the handback above it ends the block.
+suggest fix: move it above the handback, or take it out.
+```
+
+That rule is what keeps the condition-loop form honest. Written the other way round the
+loop would hand back a value and never advance, so it would never finish — now it does not
+compile. Put the change first and it works:
+
+```
+var:int 'n' [32 bit] = '3'.
+var:vector:int 'v' = loop:while math { ('n') > 0 } {
+    change:var:int 'n' = math { ('n') - 1 }.
+    handback ('n').
+}.                             # v is {2, 1, 0}
+```
+
+Rejected alternative: **`handback` contributes and execution continues**, letting one
+iteration hand back several values. It reads well for the condition loop above without
+reordering, and "the block produces a sequence, so handing one value out need not end it"
+is coherent. It was rejected because `handback` would then mean one thing inside a function
+and another inside a loop, where the chosen rule means the same thing in both. It is also
+the reversible choice: multiple values per iteration can be added later under a distinct
+keyword, whereas starting permissive and tightening would break existing programs.

@@ -28,6 +28,7 @@ const E_OVERFLOW: Code = Code::new(Category::Prec, 4);
 const E_BAD_WIDTH: Code = Code::new(Category::Prec, 5);
 const E_SIGN_VIOLATION: Code = Code::new(Category::Sign, 1);
 const E_NO_VALUE: Code = Code::new(Category::Type, 5);
+const E_UNREACHABLE: Code = Code::new(Category::Syn, 2);
 
 pub struct Checked {
     pub errors: Vec<Error>,
@@ -108,6 +109,26 @@ impl<'a> Checker<'a> {
                 self.expr(e, None);
             }
         }
+    }
+
+    /// `handback` hands its value to whatever collects it and ends the unit that
+    /// produced it — the whole call in a function, one iteration in a loop. So anything
+    /// written after it in the same block can never run.
+    ///
+    /// Catching that here is what keeps the loop form honest: `loop:while … { handback
+    /// n. change:var:int 'n' = … }` would otherwise never advance and never finish.
+    fn check_unreachable(&mut self, body: &Block) {
+        let Some(at) = body.iter().position(|s| matches!(s, Stmt::Handback { .. })) else {
+            return;
+        };
+        let Some(next) = body.get(at + 1) else { return };
+        let span = stmt_span(next);
+        self.err(
+            E_UNREACHABLE,
+            span,
+            "this can never run, because the handback above it ends the block.",
+            "move it above the handback, or take it out.",
+        );
     }
 
     fn var_decl(&mut self, v: &VarDecl) {
@@ -245,6 +266,7 @@ impl<'a> Checker<'a> {
             }
         }
         let want = if returns.base == Base::None { None } else { Some(&returns) };
+        self.check_unreachable(&f.body);
         for stmt in &f.body {
             self.statement(stmt, want);
         }
@@ -289,6 +311,7 @@ impl<'a> Checker<'a> {
             // Inside an arm, a handback belongs to the value the if produces when the
             // if is being used for its value; otherwise to the enclosing function.
             let inner_want = expected.or(outer_handback);
+            self.check_unreachable(&arm.body);
             for stmt in &arm.body {
                 self.statement(stmt, inner_want);
             }
@@ -345,6 +368,7 @@ impl<'a> Checker<'a> {
             }
         }
 
+        self.check_unreachable(&l.body);
         for stmt in &l.body {
             self.statement(stmt, outer_handback);
         }
@@ -1333,4 +1357,18 @@ fn block_hands_back(body: &Block) -> bool {
 
 fn handback_type(body: &Block) -> Option<()> {
     block_hands_back(body).then_some(())
+}
+
+/// Where a statement sits in the source, for pointing at it.
+fn stmt_span(s: &Stmt) -> Span {
+    match s {
+        Stmt::Var(v) => v.span,
+        Stmt::Change(c) => c.span,
+        Stmt::Func(f) => f.span,
+        Stmt::If(c) => c.span,
+        Stmt::Loop(l) => l.span,
+        Stmt::Print { span, .. } => *span,
+        Stmt::Handback { span, .. } => *span,
+        Stmt::Expr(e) => e.span,
+    }
 }

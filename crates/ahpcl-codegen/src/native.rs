@@ -48,6 +48,7 @@ pub fn compile(program: &Program, object_path: &Path, module_name: &str) -> Resu
         fn_params: HashMap::new(),
         current_ret: Native::None,
         handbacks: Vec::new(),
+        continues: Vec::new(),
         digits: DEFAULT_DIGITS,
         current: None,
         string_count: 0,
@@ -111,6 +112,8 @@ struct Codegen<'ctx, 'a> {
     /// Where `handback` should put its value. A function returns; a conditional used as
     /// a value stores into a slot; a loop used as a value appends to an array.
     handbacks: Vec<Handback<'ctx>>,
+    /// Where `handback` jumps to end an iteration: the innermost loop's advance block.
+    continues: Vec<inkwell::basic_block::BasicBlock<'ctx>>,
     /// How many places to compute an irrational to, from the declaration in hand.
     /// `[36 digits]` on a `var:deci` sets it for that declaration's value.
     digits: u32,
@@ -893,6 +896,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                                 self.call_runtime(name, &[array.into(), v.into()]);
                             }
                         }
+                        // `handback` hands the value to whatever collects it and ends
+                        // the unit that produced it — one iteration here, the whole
+                        // call in a function. Falling through instead would run the
+                        // rest of the body, which is not what the word means.
+                        if let Some(step) = self.continues.last().copied() {
+                            self.builder.build_unconditional_branch(step).unwrap();
+                            return Ok(true);
+                        }
                         return Ok(false);
                     }
                     None => {}
@@ -1198,6 +1209,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .build_conditional_branch(cont.into_int_value(), body_bb, done_bb)
                     .unwrap();
 
+                // `handback` ends the iteration, so it needs somewhere to jump that
+                // still advances the counter. Branching straight to the condition would
+                // skip the increment and loop forever.
+                let step_bb = self.context.append_basic_block(function, "loop.step");
+
                 self.builder.position_at_end(body_bb);
                 // Both frames, always together. Pushing `vars` alone left the counter
                 // with no recorded representation — so it was read as whatever the
@@ -1207,20 +1223,24 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.var_types.push(HashMap::new());
                 self.vars.last_mut().unwrap().insert(var.clone(), slot);
                 self.var_types.last_mut().unwrap().insert(var.clone(), Native::Int);
+                self.continues.push(step_bb);
                 let terminated = self.block(&l.body);
+                self.continues.pop();
                 self.vars.pop();
                 self.var_types.pop();
-                let terminated = terminated?;
-                if !terminated {
-                    let cur = self
-                        .builder
-                        .build_load(self.i64(), slot, "i")
-                        .unwrap()
-                        .into_int_value();
-                    let next = self.builder.build_int_add(cur, step, "next").unwrap();
-                    self.builder.build_store(slot, next).unwrap();
-                    self.builder.build_unconditional_branch(cond_bb).unwrap();
+                if !terminated? {
+                    self.builder.build_unconditional_branch(step_bb).unwrap();
                 }
+
+                self.builder.position_at_end(step_bb);
+                let cur = self
+                    .builder
+                    .build_load(self.i64(), slot, "i")
+                    .unwrap()
+                    .into_int_value();
+                let next = self.builder.build_int_add(cur, step, "next").unwrap();
+                self.builder.build_store(slot, next).unwrap();
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
 
                 self.builder.position_at_end(done_bb);
             }
@@ -1237,8 +1257,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .unwrap();
 
                 self.builder.position_at_end(body_bb);
-                let terminated = self.scoped(&l.body)?;
-                if !terminated {
+                self.continues.push(cond_bb);
+                let terminated = self.scoped(&l.body);
+                self.continues.pop();
+                if !terminated? {
                     self.builder.build_unconditional_branch(cond_bb).unwrap();
                 }
                 self.builder.position_at_end(done_bb);

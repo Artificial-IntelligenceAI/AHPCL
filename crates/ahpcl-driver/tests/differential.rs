@@ -204,6 +204,28 @@ const CASES: &[(&str, &str)] = &[
          print[('f')].",
     ),
     (
+        // `handback` ends the iteration, so the tail runs only when it did not fire.
+        // This is the case where the two implementations disagreed: native used to run
+        // the rest of the body after handing a value back.
+        "handback_ends_the_iteration",
+        "var:vector:int 'v' = loop:var:int 'i' = math { 1 to 4 } {\n\
+             if math { ('i') > 2 } {\n\
+                 handback ('i').\n\
+             }.\n\
+             print[\"tail\"].\n\
+         }.\n\
+         print[('v')].",
+    ),
+    (
+        "handback_from_a_while_loop",
+        "var:int 'n' [32 bit] = '3'.\n\
+         var:vector:int 'v' = loop:while math { ('n') > 0 } {\n\
+             change:var:int 'n' = math { ('n') - 1 }.\n\
+             handback ('n').\n\
+         }.\n\
+         print[('v')].",
+    ),
+    (
         "powers_stay_exact",
         "var:deci 'a' = '1.1'.\n\
          var:deci 'p' = math { ('a') xx 20 }.\n\
