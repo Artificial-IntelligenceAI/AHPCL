@@ -174,6 +174,22 @@ impl Type {
         self.shape.is_some()
     }
 
+    /// What one step into an array yields: the same type with its *first* dimension
+    /// removed, rather than all of them.
+    ///
+    /// A `matrix:int [3,4]` holds three `vector:int [4]`, not twelve loose `int`. Using
+    /// `element()` here told a nested comprehension's inner loop it had to produce a
+    /// plain `int`, so the documented times-table example could not be written at all.
+    pub fn peel(&self) -> Type {
+        match &self.shape {
+            Some(shape) if shape.rank() > 1 => Type {
+                shape: Some(Shape(shape.0[1..].to_vec())),
+                ..self.clone()
+            },
+            _ => self.element(),
+        }
+    }
+
     /// The element type of an array, or the type itself for a scalar.
     pub fn element(&self) -> Type {
         Type { base: self.base, sign: self.sign, shape: None, precision: self.precision.clone() }

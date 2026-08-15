@@ -631,6 +631,9 @@ macro_rules! try_rat {
 }
 
 fn rat_add(a: AhpclRational, b: AhpclRational) -> AhpclRational {
+    if a.failed != 0 || b.failed != 0 {
+        return AhpclRational::fail();
+    }
     AhpclRational::reduced(
         try_rat!(try_rat!(a.num.checked_mul(b.den)).checked_add(try_rat!(b.num.checked_mul(a.den)))),
         try_rat!(a.den.checked_mul(b.den)),
@@ -638,6 +641,9 @@ fn rat_add(a: AhpclRational, b: AhpclRational) -> AhpclRational {
 }
 
 fn rat_sub(a: AhpclRational, b: AhpclRational) -> AhpclRational {
+    if a.failed != 0 || b.failed != 0 {
+        return AhpclRational::fail();
+    }
     AhpclRational::reduced(
         try_rat!(try_rat!(a.num.checked_mul(b.den)).checked_sub(try_rat!(b.num.checked_mul(a.den)))),
         try_rat!(a.den.checked_mul(b.den)),
@@ -645,6 +651,9 @@ fn rat_sub(a: AhpclRational, b: AhpclRational) -> AhpclRational {
 }
 
 fn rat_mul(a: AhpclRational, b: AhpclRational) -> AhpclRational {
+    if a.failed != 0 || b.failed != 0 {
+        return AhpclRational::fail();
+    }
     AhpclRational::reduced(
         try_rat!(a.num.checked_mul(b.num)),
         try_rat!(a.den.checked_mul(b.den)),
@@ -652,6 +661,9 @@ fn rat_mul(a: AhpclRational, b: AhpclRational) -> AhpclRational {
 }
 
 fn rat_div(a: AhpclRational, b: AhpclRational) -> AhpclRational {
+    if a.failed != 0 || b.failed != 0 {
+        return AhpclRational::fail();
+    }
     if b.num == 0 {
         return AhpclRational::fail();
     }

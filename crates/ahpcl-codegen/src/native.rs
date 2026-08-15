@@ -509,6 +509,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .add_function("ahpcl_array_empty", ptr.fn_type(&[u32t.into()], false), None);
         self.module
             .add_function("ahpcl_array_push_int", void.fn_type(&[p.into(), i64t.into()], false), None);
+        self.module
+            .add_function("ahpcl_array_push_array", void.fn_type(&[p.into(), p.into()], false), None);
         self.module.add_function(
             "ahpcl_array_push_bool",
             void.fn_type(&[p.into(), i8t_early.into()], false),
@@ -693,8 +695,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             let mut param_reprs = Vec::new();
             let mut params = Vec::new();
             for p in &f.params {
-                param_reprs.push(native_base(&p.ty)?);
-                params.push(match native_base(&p.ty)? {
+                param_reprs.push(native_base_shaped(&p.ty, p.shape.as_ref())?);
+                params.push(match native_base_shaped(&p.ty, p.shape.as_ref())? {
                     Native::Int => self.int_type().into(),
                     Native::Bool => self.bool_type().into(),
                     Native::Deci => self.deci_type().into(),
@@ -738,7 +740,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             self.var_types
                 .last_mut()
                 .unwrap()
-                .insert(p.name.clone(), native_base(&p.ty).unwrap_or(Native::Int));
+                .insert(
+                    p.name.clone(),
+                    native_base_shaped(&p.ty, p.shape.as_ref()).unwrap_or(Native::Int),
+                );
         }
 
         let terminated = self.block(&f.body)?;
@@ -859,8 +864,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         match stmt {
             Stmt::Func(_) => Ok(false),
             Stmt::Var(v) => {
-                let native = native_base(&v.ty)?;
                 for b in &v.bindings {
+                    // Per binding: `,` extends, and each binding carries its own shape.
+                    let native = native_base_shaped(&v.ty, b.shape.as_ref())?;
                     // `[n digits]` says how much of an irrational this declaration
                     // wants; it applies to the value being computed, then resets.
                     self.digits = match b.precision.as_ref().or(v.ty.precision.as_ref()) {
@@ -876,7 +882,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         return Err(Unsupported::new("a declaration with no value"));
                     };
                     let val = self.expr(value, native)?;
-                    let slot = self.alloca(&b.name, val.get_type());
+                    // The slot takes the *declared* representation. Taking the value's
+                    // type instead meant a mismatch stored a pointer into an i128 slot
+                    // — valid IR under opaque pointers, so the verifier passed and the
+                    // later load read the pointer plus eight bytes of neighbouring
+                    // stack. A mismatch here is a bug in this compiler.
+                    let want = self.repr_type(native);
+                    assert_eq!(
+                        val.get_type(),
+                        want,
+                        "'{}' is declared as {native:?}, so its slot is {want:?}, but the \
+                         value built for it is {:?}",
+                        b.name,
+                        val.get_type()
+                    );
+                    let slot = self.alloca(&b.name, want);
                     self.builder.build_store(slot, val).unwrap();
                     self.vars.last_mut().unwrap().insert(b.name.clone(), slot);
                     self.var_types.last_mut().unwrap().insert(b.name.clone(), native);
@@ -973,6 +993,16 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     }
                     Some(Handback::Push(array, elem)) => {
                         let v = self.expr(value, elem)?;
+                        // A row rather than a single value: append its elements and let
+                        // the parent's shape grow a dimension.
+                        if elem.is_array() {
+                            self.call_runtime("ahpcl_array_push_array", &[array.into(), v.into()]);
+                            if let Some(step) = self.continues.last().copied() {
+                                self.builder.build_unconditional_branch(step).unwrap();
+                                return Ok(true);
+                            }
+                            return Ok(false);
+                        }
                         let name = match elem {
                             Native::Bool => "ahpcl_array_push_bool",
                             Native::Deci => "ahpcl_array_push_deci",
@@ -1107,13 +1137,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .rev()
                     .find_map(|f| f.get(name).copied())
                     .unwrap_or(Native::Int);
-                // Selectors change what comes out: `:length;` is a count, and a single
-                // index reads one element rather than handing back an array.
-                match selectors.last() {
-                    Some(Selector::Length) => Native::Int,
-                    Some(Selector::Indices(ix)) if ix.len() == 1 => held.element(),
-                    _ => held,
-                }
+                selector_result(held, selectors)
             }
             ExprKind::Math(inner) => self.value_repr(inner),
             ExprKind::Number(t) | ExprKind::Literal(t) if t.contains('.') => Native::Deci,
@@ -1580,7 +1604,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         l: &LoopStmt,
         want: Native,
     ) -> Result<BasicValueEnum<'ctx>, Unsupported> {
-        let elem = if want.is_array() { want.element() } else { Native::Num };
+        // One dimension per loop: a nested comprehension's outer loop hands back rows.
+        let elem = if want.is_array() { want.peel() } else { Native::Num };
         let kind = self.context.i32_type().const_int(elem.kind_tag() as u64, false);
         let array = self
             .call_runtime("ahpcl_array_empty", &[kind.into()])
@@ -2559,7 +2584,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
         self.builder.position_at_end(body);
         let cur = self.builder.build_load(self.int_type(), acc, "acc").unwrap().into_int_value();
-        let next = self.builder.build_int_mul(cur, base, "acc.next").unwrap();
+        // Checked, like `+`, `-` and `x` above: raising to a power is the one place
+        // integer arithmetic used a raw multiply, so `10 xx 39` wrapped silently
+        // instead of reporting that it overflowed.
+        let next = self.checked_int(cur, base, "smul", "multiplication")?;
         self.builder.build_store(acc, next).unwrap();
         let i2 = self.builder.build_load(self.int_type(), counter, "i").unwrap().into_int_value();
         let i3 = self.builder.build_int_add(i2, self.int_type().const_int(1, false), "i.next").unwrap();
@@ -2595,6 +2623,15 @@ enum Native {
 impl Native {
     fn is_array(self) -> bool {
         matches!(self, Native::Array(..))
+    }
+
+    /// One step into an array: a rank above one yields an array of one less rank, and
+    /// a vector yields its element. Mirrors `Type::peel` in the checker.
+    fn peel(self) -> Native {
+        match self {
+            Native::Array(kind, r) if r > 1 => Native::Array(kind, r - 1),
+            other => other.element(),
+        }
     }
 
     fn rank(self) -> u32 {
@@ -2642,18 +2679,77 @@ enum Handback<'ctx> {
     Push(BasicValueEnum<'ctx>, Native),
 }
 
+/// What a chain of selectors produces, given what the variable holds.
+///
+/// This has to agree exactly with `array_selectors`, which does the work: a dimension
+/// addressed by a *single* index collapses, and only when every dimension collapses is
+/// the result a single value rather than an array. Deciding from the last selector alone
+/// — the old rule — called `('m'):1;` on a matrix a scalar, so a row came back where an
+/// element was expected and the generated call did not match its own declaration.
+fn selector_result(held: Native, selectors: &[Selector]) -> Native {
+    let mut current = held;
+    let mut run: Vec<&Selector> = Vec::new();
+
+    for sel in selectors {
+        match sel {
+            // These end a run and answer a question about the whole array.
+            Selector::Length => {
+                current = Native::Int;
+                run.clear();
+            }
+            Selector::Shape => {
+                current = Native::Array(Native::Int.kind_tag(), 1);
+                run.clear();
+            }
+            other => run.push(other),
+        }
+    }
+    if run.is_empty() || !current.is_array() {
+        return current;
+    }
+
+    let singles = run
+        .iter()
+        .filter(|s| matches!(s, Selector::Indices(ix) if ix.len() == 1))
+        .count();
+    let rank = current.rank() as usize;
+    if singles == run.len() && singles == rank {
+        // Every dimension pinned: one element.
+        return current.element();
+    }
+    // The dimensions addressed by a single index disappear; the rest survive.
+    let left = rank.saturating_sub(singles).max(1);
+    Native::Array(current.element().kind_tag(), left as u32)
+}
+
 /// Which native representation a declared type maps onto, if any.
 fn native_base(ty: &TypeRef) -> Result<Native, Unsupported> {
+    native_base_shaped(ty, None)
+}
+
+/// The same, given the shape written on the *binding*.
+///
+/// `TypeRef.shape` is always `None` for a declaration — the parser puts `[2,2,2]` on
+/// `Binding.shape`, not on the type. Reading rank from the type alone therefore fell
+/// through to `Rank::dimensions()`, which answers `None` for `tensor` because a tensor
+/// may have any rank of three or more. Every tensor then came out as rank 1, and the
+/// backend and the runtime disagreed about the shape of every tensor in the program.
+fn native_base_shaped(ty: &TypeRef, shape: Option<&Vec<Dim>>) -> Result<Native, Unsupported> {
     if ty.rank.is_some() {
         let scalar = TypeRef { rank: None, ..ty.clone() };
-        // The written shape is the most reliable rank; the rank name backs it up.
-        let rank = ty
-            .shape
-            .as_ref()
+        // The written shape is the most reliable rank; the rank name backs it up. A
+        // `tensor` with neither is a rank we do not know, and guessing is what caused
+        // the bug above.
+        let rank = shape
             .map(|s| s.len())
-            .or_else(|| ty.rank.and_then(|r| r.dimensions()))
-            .unwrap_or(1) as u32;
-        return Ok(Native::Array(native_base(&scalar)?.kind_tag(), rank));
+            .or_else(|| ty.shape.as_ref().map(|s| s.len()))
+            .or_else(|| ty.rank.and_then(|r| r.dimensions()));
+        let Some(rank) = rank else {
+            return Err(Unsupported::new(
+                "a tensor whose rank is not written — give it a shape, as in [2,2,2]",
+            ));
+        };
+        return Ok(Native::Array(native_base(&scalar)?.kind_tag(), rank as u32));
     }
     match ty.base.as_str() {
         "int" => Ok(Native::Int),

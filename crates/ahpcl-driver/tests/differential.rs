@@ -273,6 +273,44 @@ const CASES: &[(&str, &str)] = &[
          print[('m')].",
     ),
     (
+        // Rank came from the type, but a declaration's shape lives on the *binding*, so
+        // every tensor was rank 1: selectors read the flat buffer, a row came back where
+        // an element was wanted, and the slot then held a pointer read as an integer.
+        "tensor_rank",
+        "var:tensor:int 't' [2,2,2] = {{{'1','2'},{'3','4'}},{{'5','6'},{'7','8'}}}.\n\
+         var:int 'a' [64 bit] = ('t'):1;:1;:1;.\n\
+         print[('a')].\nprint[('t'):1;].\nprint[('t'):2;:1;].",
+    ),
+    (
+        // `value_repr` decided from the last selector alone, so a chain that does not
+        // fully collapse was called a scalar and the call disagreed with its own
+        // declaration.
+        "matrix_selector_shapes",
+        "var:matrix:int 'm' [2,3] = {{'1','2','3'},{'4','5','6'}}.\n\
+         var:vector:int 'c' [2] = math { ('m'):all;:2; + 10 }.\n\
+         print[('m'):1;].\nprint[('m'):all;:2;].\nprint[('c')].",
+    ),
+    (
+        // The documented times table. `element()` stripped every dimension, so the
+        // inner loop was told to produce a scalar and the example could not be written.
+        "nested_comprehension",
+        "var:matrix:num 'times_table' = loop:var:int 'i' = math { 1 to 3 } {\n\
+             handback loop:var:int 'j' = math { 1 to 4 } {\n\
+                 handback math { ('i') x ('j') }.\n\
+             }.\n\
+         }.\n\
+         print[('times_table')].\nprint[('times_table'):shape;].\nprint[('times_table'):2;].",
+    ),
+    (
+        // Comparisons pin each other, so the side that can decide must go first.
+        "comparison_pins_either_way",
+        "var:int 'i' [64 bit] = '5'.\n\
+         var:bool 'a' = math { 4 < ('i') }.\n\
+         var:bool 'b' = math { ('i') > 4 }.\n\
+         var:bool 'c' = math { 24 >= ('i') }.\n\
+         print[('a')].\nprint[('b')].\nprint[('c')].",
+    ),
+    (
         "powers_stay_exact",
         "var:deci 'a' = '1.1'.\n\
          var:deci 'p' = math { ('a') xx 20 }.\n\

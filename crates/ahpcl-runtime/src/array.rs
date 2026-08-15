@@ -132,6 +132,26 @@ pub unsafe extern "C" fn ahpcl_array_push_num(a: *mut Array, v: *const Cell) {
     push(a, cell);
 }
 
+/// Append a whole sub-array: one row handed back by the inner loop of a nested
+/// comprehension. The parent's shape gains a leading dimension counting the rows.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_array_push_array(a: *mut Array, child: *const Array) {
+    let child = &*child;
+    let a = &mut *a;
+    if a.items.is_empty() {
+        a.kind = child.kind;
+    }
+    a.items.extend(child.items.iter().cloned());
+    let rows = if child.items.is_empty() {
+        0
+    } else {
+        a.items.len() / child.items.len()
+    };
+    let mut shape = vec![rows as u64];
+    shape.extend(child.shape.iter().copied());
+    a.shape = shape;
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_array_len(a: *const Array) -> i128 {
     (*a).items.len() as i128

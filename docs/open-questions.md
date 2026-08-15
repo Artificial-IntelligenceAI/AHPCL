@@ -108,6 +108,23 @@ Moved to [types.md](types.md).
 **32. Does `handback` end a loop body — DECIDED 2026-08-13: yes.** Moved to
 [syntax.md](syntax.md).
 
+**34. Multi-file builds compile each file separately.** `buildfile:main.ahpcl, lib.ahpcl.`
+runs an independent check/build/run per file, so a function declared in one is not visible
+in the other — while [cli.md](cli.md) presents this as *the* multi-file mechanism. Needs a
+decision on what "multi-file" means (one program from several files, in order? a module
+system? something else) before it can be implemented. Found by stress-testing, 2026-08-13.
+
+**35. `⊗` disagrees with its own documentation.** [syntax.md](syntax.md) shows
+`[1,2,3] ⊗ [4,5,6]` giving a flat 9-element vector; the implementation gives shape `[3,3]`,
+and declaring `[9]` is a shape error. Both are defensible — the tensor product of two
+vectors is conventionally a matrix, which is what the code does — so this is a question of
+which one moves. Found by stress-testing, 2026-08-13.
+
+**36. `read` into an array is documented but unimplemented.** [types.md](types.md) and
+[syntax.md](syntax.md) both show `var:vector:num 'data' [?] = read["measurements.csv"].`
+`read` only ever produces `str`, so this is a type error. Needs a decision on how a file
+becomes numbers — split on what, parsed with which options — before it can be built.
+
 *(Numbering has gaps where items were resolved or removed. Kept stable so references hold.)*
 
 ---

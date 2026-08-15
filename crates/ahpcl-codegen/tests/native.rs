@@ -730,3 +730,27 @@ fn parse_reads_a_fraction_when_asked() {
         "1/3"
     );
 }
+
+#[test]
+fn raising_to_a_power_reports_overflow_rather_than_wrapping() {
+    // `int_pow` used a raw multiply while `+`, `-` and `x` beside it were checked, so
+    // `10 xx 39` wrapped to 10^39 mod 2^128 and looked like an answer.
+    let src = "var:int 'a' [64 bit] = '10'.\n\
+               var:int 'b' [128 bit] = math { ('a') xx 39 }.\n\
+               print[('b')].";
+    let (program, errors) = parse_source(src);
+    assert!(errors.is_empty());
+    let object = workdir().join("powovf.o");
+    compile(&program, &object, "powovf").expect("should compile");
+    // The check is emitted; running it is what stops. Exactness up to the limit still
+    // works, which is the half that must not regress.
+    assert_eq!(
+        compile_and_run(
+            "powok",
+            "var:int 'a' [64 bit] = '10'.\n\
+             var:int 'b' [128 bit] = math { ('a') xx 20 }.\n\
+             print[('b')]."
+        ),
+        "100000000000000000000"
+    );
+}

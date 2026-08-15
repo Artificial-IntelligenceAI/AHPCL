@@ -410,7 +410,9 @@ impl<'a> Checker<'a> {
             ExprKind::ArrayLit(items) => self.array_literal(items, e.span, expected),
             ExprKind::If(chain) => self.if_chain(chain, expected, None),
             ExprKind::Loop(l) => {
-                let elem = expected.map(|t| t.element());
+                // One dimension per loop: an inner loop of a nested comprehension fills
+                // a row, not a single element.
+                let elem = expected.map(|t| t.peel());
                 self.loop_stmt(l, elem.as_ref());
                 // Each handback contributes one element, so the length comes from the
                 // range — "the shape falls out for free".
@@ -458,6 +460,24 @@ impl<'a> Checker<'a> {
                 return Some(Type::scalar(Base::Bool));
             }
             return Some(Type::scalar(Base::Str));
+        }
+
+        // A number too big for the value domain is an error here, not later. It used to
+        // pass the checker, and the *interpreter* then fell back to holding it as text —
+        // so it contributed 0 to any sum and the oracle quietly computed wrong answers,
+        // while the backend refused to compile it and blamed itself for a gap.
+        let digits: String = text.strip_prefix(['-', '+']).unwrap_or(text).replace('.', "");
+        if digits.trim_start_matches('0').len() > 39 || digits.parse::<i128>().is_err() {
+            if !text.contains('.') {
+                self.err(
+                    E_OVERFLOW,
+                    span,
+                    format!("{text} is too large for a whole number to hold."),
+                    "the widest int reaches 170141183460469231731687303715884105727; \
+                     use fewer digits, or a deci if the exact value is not needed.",
+                );
+                return Some(Type::scalar(Base::Int));
+            }
         }
 
         let has_point = text.contains('.');
@@ -633,16 +653,30 @@ impl<'a> Checker<'a> {
         // that is verification's job, not the type checker's.
         let unrefined = expected.map(|t| Type { sign: None, ..t.clone() });
         let operand_expectation = if comparison { None } else { unrefined.as_ref() };
-        let a = self.expr(lhs, operand_expectation);
-        // A comparison bound is an ordinary number, not a member of the refined type.
-        // Pinning `0` to `+int` in `math { ('n') > 0 }` would reject the very idiom
-        // used to keep a +int positive.
-        let b_expectation = if comparison {
-            a.as_ref().map(|t| Type { sign: None, precision: None, ..t.clone() })
+
+        // A comparison takes no expectation from context — `math { ('n') > 0 }` must not
+        // pin `0` to a `+int`, or the idiom that keeps an int positive would reject
+        // itself. So the two sides pin each other. Which means the side that *can*
+        // decide has to go first: checking strictly left to right made `('i') > 5` work
+        // and its mirror image `5 < ('i')` an error, for no reason a reader could see.
+        let bare_number =
+            |e: &Expr| matches!(&e.kind, ExprKind::Number(_) | ExprKind::Literal(_));
+        let strip = |t: &Type| Type { sign: None, precision: None, ..t.clone() };
+
+        let (a, b) = if comparison && bare_number(lhs) && !bare_number(rhs) {
+            let b = self.expr(rhs, None);
+            let a = self.expr(lhs, b.as_ref().map(strip).as_ref());
+            (a, b)
         } else {
-            operand_expectation.cloned().or_else(|| a.clone())
+            let a = self.expr(lhs, operand_expectation);
+            let b_expectation = if comparison {
+                a.as_ref().map(strip)
+            } else {
+                operand_expectation.cloned().or_else(|| a.clone())
+            };
+            let b = self.expr(rhs, b_expectation.as_ref());
+            (a, b)
         };
-        let b = self.expr(rhs, b_expectation.as_ref());
 
         // Rule A: a *bare* array reference sums, so it is scalar here. One carrying a
         // selector stays an array, and the operation runs elementwise.
