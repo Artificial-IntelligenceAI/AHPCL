@@ -1324,7 +1324,7 @@ and another inside a loop, where the chosen rule means the same thing in both. I
 the reversible choice: multiple values per iteration can be added later under a distinct
 keyword, whereas starting permissive and tightening would break existing programs.
 
-## `parse[… fraction]` — **DECIDED, not yet implemented**
+## `parse[… fraction]` — **DECIDED**
 
 `parse` reads decimal text only. With the `fraction` option it also reads `n/d`:
 
@@ -1340,9 +1340,14 @@ syntax, and a fraction may be parsed into a `deci` too); **`ratio`** (also means
 form, so it would suggest `2:6` works, which it does not); **`over`** (reads naturally —
 "two over six" — but a bare preposition says little when met cold in someone else's code).
 
-### To implement
+### Why the operand kinds matter
 
-- `PARSE_FRACTION` bit in `crates/ahpcl-runtime/src/lib.rs`, handled in `parse_prepare` or
+Elementwise comparison hands back an array of `bool`, but its *operands* keep their own
+kinds. The backend briefly coerced both sides to the result's element type, which turned
+`('a'):all; > 2` into a comparison against `true` — read back as 1 — so every operator
+silently used the wrong right-hand side while looking plausible. The differential test
+caught it; `{1,2,3} > 2` gave `{false, true, true}` where the interpreter said
+`{false, false, true}`.
   the `ahpcl_parse_*` entry points — the runtime already reduces via `AhpclRational::reduced`.
 - `"fraction" => flags |= …` in the backend's `parse` builtin.
 - The matching option in the interpreter's `ParseOptions`, so both paths agree.

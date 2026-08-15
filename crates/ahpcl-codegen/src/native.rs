@@ -2089,9 +2089,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         use BinOp::*;
         let lr = self.value_repr(lhs);
         let rr = self.value_repr(rhs);
+        // A comparison's result element is `bool`, but its *operands* are not: coercing
+        // them to the wanted element turned `('a'):all; > 2` into a comparison against
+        // `true`, read back as 1. Each side keeps its own kind, and the runtime promotes
+        // across kinds when it compares.
+        let operand_want = match op {
+            Eq | NotEq | Less | Greater | LessEq | GreaterEq => Native::None,
+            _ => want,
+        };
         // A scalar beside an array is broadcast, so it becomes a one-element array.
-        let a = self.as_array(lhs, lr, want)?;
-        let b = self.as_array(rhs, rr, want)?;
+        let a = self.as_array(lhs, lr, operand_want)?;
+        let b = self.as_array(rhs, rr, operand_want)?;
 
         let name = match op {
             Dot => "ahpcl_array_dot",
@@ -2110,11 +2118,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .call_runtime("ahpcl_array_elementwise", &[tag.into(), a.into(), b.into()])
                     .ok_or_else(|| Unsupported::new("elementwise arithmetic"));
             }
-            // Elementwise comparison is written in the runtime as
-            // `ahpcl_array_compare` and unit-tested there, but wiring it up here gave
-            // `{1,2,3} > 2` as `{false, true, true}` — it called 2 > 2 true — where the
-            // interpreter is right with `{false, false, true}`. Left declining until
-            // that is understood rather than shipping a wrong answer.
+            // Comparison is elementwise too, handing back an array of bools.
+            Eq | NotEq | Less | Greater | LessEq | GreaterEq => {
+                let tag = match op {
+                    Eq => 10u64,
+                    NotEq => 11,
+                    Less => 12,
+                    Greater => 13,
+                    LessEq => 14,
+                    _ => 15,
+                };
+                let tag = self.context.i32_type().const_int(tag, false);
+                return self
+                    .call_runtime("ahpcl_array_compare", &[tag.into(), a.into(), b.into()])
+                    .ok_or_else(|| Unsupported::new("elementwise comparison"));
+            }
             other => return Err(Unsupported::new(format!("{other:?} on arrays"))),
         };
         let out = self
@@ -2185,6 +2203,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         "scientific" => flags |= 2,
                         "hex" => flags |= 4,
                         "unicode-digits" => flags |= 8,
+                        "fraction" => flags |= 16,
                         "group" | "decimal" => {
                             let Some(v) = value else {
                                 return Err(Unsupported::new(format!("'{name}' without a value")));

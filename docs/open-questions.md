@@ -103,17 +103,10 @@ default), and a real "unset" value (every type gains a state and every read gain
 Moved to [types.md](types.md).
 
 **31. Should `parse` read a fraction — DECIDED 2026-08-13: yes, under the option
-`fraction`.** Moved to [syntax.md](syntax.md). **Not yet implemented.**
+`fraction`.** Implemented. See [syntax.md](syntax.md).
 
 **32. Does `handback` end a loop body — DECIDED 2026-08-13: yes.** Moved to
 [syntax.md](syntax.md).
-
-**33. Elementwise array comparison gives a wrong answer natively.** `math { ('a'):all; > 2 }`
-on `{1,2,3}` should be `{false, false, true}`; the backend produced `{false, true, true}`,
-calling `2 > 2` true, as if comparing against 1. The runtime side (`ahpcl_array_compare`) is
-written and unit-tested; the fault is somewhere in wiring it up in `array_binary`. The
-backend declines the operator for now rather than shipping the wrong answer, so the
-interpreter and compiled code cannot disagree. Found by the differential test, 2026-08-13.
 
 *(Numbering has gaps where items were resolved or removed. Kept stable so references hold.)*
 

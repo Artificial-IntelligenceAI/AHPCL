@@ -703,3 +703,30 @@ fn a_literal_may_use_the_whole_int_range() {
         "170141183460469231731687303715884105727"
     );
 }
+
+#[test]
+fn elementwise_comparison_compares_the_operands_not_the_result() {
+    // The result element is `bool`, but the operands are not: coercing them to the
+    // wanted element compared `('a'):all;` against `true`, read back as 1, so every
+    // operator silently used the wrong right-hand side.
+    assert_eq!(
+        compile_and_run(
+            "arraycmp",
+            "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+             var:vector:bool 'b' [3] = math { ('a'):all; > 2 }.\n\
+             print[('b')]."
+        ),
+        "{false, false, true}"
+    );
+}
+
+#[test]
+fn parse_reads_a_fraction_when_asked() {
+    assert_eq!(
+        compile_and_run(
+            "parsefrac",
+            "var:rat 'r' [64 bit] = parse[\"2/6\" fraction].\nprint[('r')]."
+        ),
+        "1/3"
+    );
+}

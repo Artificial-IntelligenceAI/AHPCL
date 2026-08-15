@@ -421,6 +421,8 @@ pub const PARSE_TRIM: u64 = 1;
 pub const PARSE_SCIENTIFIC: u64 = 2;
 pub const PARSE_HEX: u64 = 4;
 pub const PARSE_UNICODE_DIGITS: u64 = 8;
+/// Read `n/d` as a fraction. Opt-in, matching the interpreter.
+pub const PARSE_FRACTION: u64 = 16;
 
 /// Normalise text under the parse options, or `None` if the options reject it.
 unsafe fn parse_prepare(
@@ -558,9 +560,18 @@ pub unsafe extern "C" fn ahpcl_parse_rat(
     decimal: *const AhpclStr,
 ) {
     let prepared = parse_prepare(text, flags, group, decimal);
-    // Decimal text only, matching the interpreter. Whether `parse` should also accept
-    // "2/6" is a language question, not something the backend gets to decide on its own.
+    // Decimal text, plus `n/d` when `fraction` was asked for.
     let parsed = prepared.as_deref().and_then(|s| {
+        if flags & PARSE_FRACTION != 0 {
+            if let Some((n, d)) = s.split_once('/') {
+                let n: i128 = n.trim().parse().ok()?;
+                let d: i128 = d.trim().parse().ok()?;
+                if d == 0 {
+                    return None;
+                }
+                return Some(AhpclRational::reduced(n, d));
+            }
+        }
         let (m, scale) = split_decimal(s)?;
         Some(AhpclRational::reduced(m, 10i128.checked_pow(scale)?))
     });

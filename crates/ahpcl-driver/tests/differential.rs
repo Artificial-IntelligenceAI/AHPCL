@@ -247,6 +247,25 @@ const CASES: &[(&str, &str)] = &[
          print[('names')].",
     ),
     (
+        // A comparison's result is a bool array, but its operands keep their own kinds:
+        // coercing them to the result element compared against `true`, so every operator
+        // silently used 1 as the right-hand side.
+        "elementwise_comparison",
+        "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+         var:vector:bool 'big' [3] = math { ('a'):all; > 2 }.\n\
+         var:vector:bool 'small' [3] = math { ('a'):all; <= 2 }.\n\
+         var:vector:int 'b' [3] = {'1','9','3'}.\n\
+         var:vector:bool 'same' [3] = math { ('a'):all; = ('b'):all; }.\n\
+         print[('big')].\nprint[('small')].\nprint[('same')].",
+    ),
+    (
+        "parse_fractions",
+        "var:rat 'a' [64 bit] = parse[\"2/6\" fraction].\n\
+         var:rat 'b' [64 bit] = parse[\"7/2\" fraction].\n\
+         var:rat 'c' [64 bit] = parse[\"0.5\"].\n\
+         print[('a')].\nprint[('b')].\nprint[('c')].",
+    ),
+    (
         "chained_element_assignment",
         "var:matrix:int 'm' [2,3] = {{'1','2','3'},{'4','5','6'}}.\n\
          change:var:int 'm':2;:1; = '99'.\n\

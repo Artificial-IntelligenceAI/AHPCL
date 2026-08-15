@@ -690,6 +690,27 @@ impl<'a> Interpreter<'a> {
                     }
                 }
                 let candidate = options.normalise(&text);
+                // A fraction is exact, so it becomes a rational rather than going
+                // through the decimal path and losing the repeating part.
+                if options.fraction {
+                    if let Some((n, d)) = candidate.split_once('/') {
+                        let parsed = n
+                            .trim()
+                            .parse::<i128>()
+                            .ok()
+                            .zip(d.trim().parse::<i128>().ok())
+                            .and_then(|(n, d)| Rational::new(n, d));
+                        return match parsed {
+                            Some(r) => Ok(coerce(Value::Rat(r), hint)),
+                            None => Err(self.err(
+                                E_PARSE,
+                                span,
+                                format!("{text:?} is not a fraction AHPCL can read."),
+                                "a fraction is two whole numbers separated by /, as in \"2/6\".",
+                            )),
+                        };
+                    }
+                }
                 match options.parse_number(&candidate) {
                     Some(d) => Ok(coerce(Value::Deci(d), hint)),
                     None => Err(self.err(
@@ -697,7 +718,7 @@ impl<'a> Interpreter<'a> {
                         span,
                         format!("{text:?} is not a number AHPCL can read."),
                         "parse is strict by default; add trim, scientific, hex, unicode-digits, \
-                         or group:\",\" decimal:\".\" as needed.",
+                         fraction, or group:\",\" decimal:\".\" as needed.",
                     )),
                 }
             }
@@ -1472,6 +1493,9 @@ struct ParseOptions {
     scientific: bool,
     hex: bool,
     unicode_digits: bool,
+    /// Read `n/d` as a fraction. Opt-in, so a stray `/` stays an error rather than
+    /// being silently reinterpreted.
+    fraction: bool,
     /// Which character separates thousands, when one is declared.
     group: Option<char>,
     /// Which character is the decimal point, when it is not `.`.
@@ -1485,6 +1509,7 @@ impl ParseOptions {
             "scientific" => self.scientific = true,
             "hex" => self.hex = true,
             "unicode-digits" => self.unicode_digits = true,
+            "fraction" => self.fraction = true,
             "group" => self.group = value.and_then(|v| v.chars().next()),
             "decimal" => self.decimal = value.and_then(|v| v.chars().next()),
             _ => {}
