@@ -223,3 +223,30 @@ the unoptimised build was hiding it.
 Both are the same underlying mistake, and the third and fourth time it has appeared: the
 compiler and the runtime holding different opinions about a shared layout, with nothing
 that fails at build time. Prefer flat arrays of one primitive over a shared struct.
+
+## Reading one array element — **the fast path**
+
+A selector that pins every dimension yields one value, and the backend addresses that
+element directly: a single index becomes an `ahpcl_array_get_*` call, and several become
+one `ahpcl_array_offset` followed by the same. No descriptor arrays, no allocation.
+
+It used to go through the general selector-run machinery, which built four descriptor
+arrays and allocated a whole new array — a `Vec` of cells, a shape, and a box — to hold
+the single value, then read it back out. Correct, and about 120ns and one **leaked object
+per element read**. Summing a million elements took 1.23s and 3.28GB; the same loop in C
+takes 2ms and 9MB. With the fast path it is 21ms and 68MB.
+
+Three stress-test passes and a green suite never saw it, because every test asked only
+whether the answer was right. It was. See the budget tests below.
+
+## Budget tests
+
+`crates/ahpcl-codegen/tests/budget.rs` bounds the *time* a program takes, not its output.
+
+This is a class the differential oracle cannot cover even in principle: it compares what
+two implementations print, and a leaky or quadratic implementation prints exactly the same
+thing as a fast one. Correctness testing and resource testing are different questions, and
+AHPCL had only ever asked the first.
+
+The bounds are deliberately loose — tripwires for a regression that reintroduces
+per-element allocation or scanning, not performance targets.

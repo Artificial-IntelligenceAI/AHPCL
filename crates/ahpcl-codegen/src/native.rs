@@ -2014,12 +2014,46 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .count();
         let collapses = !run.is_empty() && singles == run.len() && singles as u32 == rank;
 
-        let out = self.apply_run(current, &run)?;
+        // Reading one element does not need the run machinery at all. Going through it
+        // built four descriptor arrays and allocated a whole new array — a `Vec` of
+        // cells, a shape, and a box — to hold a single value, then read it back out.
+        // That is ~120ns and one leaked object *per element read*: summing a million
+        // elements took 3.2GB. Address the element directly instead.
         if collapses && !want.is_array() {
-            let one = self.int_type().const_int(1, false);
-            let v = self.array_load(out, one.into(), elem)?;
+            let index = if run.len() == 1 {
+                let Selector::Indices(ix) = run[0] else {
+                    unreachable!("a collapsing run holds single indices")
+                };
+                self.expr(&ix[0], Native::Int)?
+            } else {
+                // Several dimensions: the runtime knows the shape, so it does the
+                // row-major arithmetic — the same call element assignment uses.
+                let ty = self.int_type();
+                let buffer = self.alloca_array("read.ix", ty.into(), run.len());
+                for (k, sel) in run.iter().enumerate() {
+                    let Selector::Indices(ix) = sel else {
+                        unreachable!("a collapsing run holds single indices")
+                    };
+                    let v = self.expr(&ix[0], Native::Int)?;
+                    let at = unsafe {
+                        self.builder
+                            .build_gep(ty, buffer, &[ty.const_int(k as u64, false)], "at")
+                            .unwrap()
+                    };
+                    self.builder.build_store(at, v).unwrap();
+                }
+                let n = ty.const_int(run.len() as u64, false);
+                self.call_runtime(
+                    "ahpcl_array_offset",
+                    &[current.into(), buffer.into(), n.into()],
+                )
+                .ok_or_else(|| Unsupported::new("addressing an element"))?
+            };
+            let v = self.array_load(current, index, elem)?;
             return self.convert(v, elem, want);
         }
+
+        let out = self.apply_run(current, &run)?;
         Ok(out)
     }
 
