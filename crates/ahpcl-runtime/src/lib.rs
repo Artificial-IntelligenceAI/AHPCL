@@ -384,6 +384,19 @@ pub unsafe extern "C" fn ahpcl_clock(out: *mut AhpclDecimal) {
 pub struct AhpclStr {
     pub ptr: *const u8,
     pub len: u64,
+    /// Who owns the bytes, or null when nobody does.
+    ///
+    /// A literal points into the binary's constant data and is never freed — there is
+    /// nothing to free. Text built while the program runs is counted through this box,
+    /// which is what stops a loop calling `read` from growing without bound.
+    pub owner: *mut StrBox,
+}
+
+/// The bytes of a runtime-built string, with its reference count.
+#[repr(C)]
+pub struct StrBox {
+    pub count: u64,
+    pub text: Box<str>,
 }
 
 impl AhpclStr {
@@ -397,8 +410,14 @@ impl AhpclStr {
     pub(crate) fn owned(text: String) -> AhpclStr {
         let boxed = text.into_boxed_str();
         let len = boxed.len() as u64;
-        let ptr = Box::into_raw(boxed) as *const u8;
-        AhpclStr { ptr, len }
+        let ptr = boxed.as_ptr();
+        let owner = Box::into_raw(Box::new(StrBox { count: 1, text: boxed }));
+        AhpclStr { ptr, len, owner }
+    }
+
+    /// Text that owns nothing: a literal, or the empty string.
+    pub(crate) fn borrowed(ptr: *const u8, len: u64) -> AhpclStr {
+        AhpclStr { ptr, len, owner: std::ptr::null_mut() }
     }
 }
 
@@ -597,6 +616,27 @@ unsafe fn parse_failure(text: *const AhpclStr) -> ! {
     let code = std::ffi::CString::new("AHPCL-RUN-0004").unwrap();
     let msg = std::ffi::CString::new(message).unwrap();
     ahpcl_fail(code.as_ptr(), msg.as_ptr())
+}
+
+/// Another place now holds this text. A null owner is a literal, and does nothing.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_str_retain(owner: *mut StrBox) {
+    if !owner.is_null() {
+        (*owner).count += 1;
+    }
+}
+
+/// One fewer place holds this text; the last release frees the bytes.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_str_release(owner: *mut StrBox) {
+    if owner.is_null() {
+        return;
+    }
+    if (*owner).count > 1 {
+        (*owner).count -= 1;
+        return;
+    }
+    drop(Box::from_raw(owner));
 }
 
 // ── exact rationals ─────────────────────────────────────────────────────────
@@ -974,7 +1014,7 @@ mod tests {
     }
 
     fn s(text: &'static str) -> AhpclStr {
-        AhpclStr { ptr: text.as_ptr(), len: text.len() as u64 }
+        AhpclStr::borrowed(text.as_ptr(), text.len() as u64)
     }
 
     #[test]

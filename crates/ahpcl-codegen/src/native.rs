@@ -301,14 +301,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// The text layout: a pointer into constant data or the heap, plus a byte length.
     fn str_type(&self) -> inkwell::types::StructType<'ctx> {
         // `len` is a byte count in the runtime's `AhpclStr`, so it stays 64-bit however
-        // wide an AHPCL `int` is.
-        self.context.struct_type(
-            &[
-                self.context.ptr_type(inkwell::AddressSpace::default()).into(),
-                self.context.i64_type().into(),
-            ],
-            false,
-        )
+        // wide an AHPCL `int` is. `owner` is null for a literal and points at the
+        // reference count for text built while the program runs.
+        let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+        self.context
+            .struct_type(&[ptr.into(), self.context.i64_type().into(), ptr.into()], false)
     }
 
     /// A string literal as a `{ptr, len}` value pointing at constant data.
@@ -317,7 +314,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         // A byte length, so it matches `str_type`'s second field and the runtime's
         // `AhpclStr` — not the `int` width.
         let len = self.context.i64_type().const_int(text.len() as u64, false);
-        self.build_struct(self.str_type(), &[global.into(), len.into()])
+        // A literal lives in the binary's constant data, so it owns nothing.
+        let owner = self.ptr().const_null();
+        self.build_struct(self.str_type(), &[global.into(), len.into(), owner.into()])
     }
 
     /// Build a struct value, checking each field's type against the struct's.
@@ -522,6 +521,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             "ahpcl_array_release",
             "ahpcl_num_retain",
             "ahpcl_num_release",
+            "ahpcl_str_retain",
+            "ahpcl_str_release",
         ] {
             self.module.add_function(name, void.fn_type(&[p.into()], false), None);
         }
@@ -895,7 +896,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         }
         while self.temporaries.len() > mark {
             let (v, repr) = self.temporaries.pop().expect("a recorded temporary");
-            self.call_runtime(repr.release_fn(), &[v.into()]);
+            let handle = self.counted_handle(v, repr);
+            self.call_runtime(repr.release_fn(), &[handle.into()]);
         }
     }
 
@@ -909,6 +911,20 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.vars.pop();
         self.var_types.pop();
         out
+    }
+
+    /// The pointer retain and release actually take.
+    ///
+    /// An array or a `num` *is* the heap pointer. Text is a `{ptr, len, owner}` value
+    /// passed around whole, so the count lives behind its third field — null for a
+    /// literal, which makes retain and release harmless no-ops on one.
+    fn counted_handle(&self, v: BasicValueEnum<'ctx>, repr: Native) -> BasicValueEnum<'ctx> {
+        if repr != Native::Str {
+            return v;
+        }
+        self.builder
+            .build_extract_value(v.into_struct_value(), 2, "str.owner")
+            .unwrap()
     }
 
     /// Whether the builder sits in a block that has already branched away.
@@ -938,8 +954,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             })
             .unwrap_or_default();
         for (slot, repr) in held {
-            let v = self.builder.build_load(self.ptr(), slot, "scope.held").unwrap();
-            self.call_runtime(repr.release_fn(), &[v.into()]);
+            let ty = self.repr_type(repr);
+            let v = self.builder.build_load(ty, slot, "scope.held").unwrap();
+            let handle = self.counted_handle(v, repr);
+            self.call_runtime(repr.release_fn(), &[handle.into()]);
         }
     }
 
@@ -981,7 +999,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     );
                     let slot = self.alloca(&b.name, want);
                     if native.is_counted() {
-                        self.call_runtime(native.retain_fn(), &[val.into()]);
+                        let handle = self.counted_handle(val, native);
+                        self.call_runtime(native.retain_fn(), &[handle.into()]);
                     }
                     self.builder.build_store(slot, val).unwrap();
                     self.vars.last_mut().unwrap().insert(b.name.clone(), slot);
@@ -1057,12 +1076,15 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     if held.is_counted() {
                         // Retain the new value *before* releasing the old, so that
                         // `change:var:vector:int 'a' = ('a'):all;` — or any assignment
-                        // where the two are the same array — does not free the value it
-                        // is about to store.
-                        let old = self.builder.build_load(self.ptr(), slot, "old").unwrap();
-                        self.call_runtime(held.retain_fn(), &[val.into()]);
+                        // where the two are the same value — does not free what it is
+                        // about to store.
+                        let ty = self.repr_type(held);
+                        let old = self.builder.build_load(ty, slot, "old").unwrap();
+                        let new_handle = self.counted_handle(val, held);
+                        let old_handle = self.counted_handle(old, held);
+                        self.call_runtime(held.retain_fn(), &[new_handle.into()]);
                         self.builder.build_store(slot, val).unwrap();
-                        self.call_runtime(held.release_fn(), &[old.into()]);
+                        self.call_runtime(held.release_fn(), &[old_handle.into()]);
                     } else {
                         self.builder.build_store(slot, val).unwrap();
                     }
@@ -2030,7 +2052,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             Native::Str => {
                 let out = self.alloca("elem.str", self.str_type().into());
                 self.call_runtime("ahpcl_array_get_str", &[out.into(), array.into(), index.into()]);
-                Ok(self.builder.build_load(self.str_type(), out, "elem.sval").unwrap())
+                let v = self.builder.build_load(self.str_type(), out, "elem.sval").unwrap();
+                // Handed back through an out-pointer rather than returned, so the
+                // ownership hook on `call_runtime` cannot see it. Record it here.
+                self.temporaries.push((v, Native::Str));
+                Ok(v)
             }
             Native::Num => self
                 .call_runtime("ahpcl_array_get_num", &[array.into(), index.into()])
@@ -2384,7 +2410,9 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let path = self.spill(path, "read.path");
                 let out = self.alloca("read.out", self.str_type().into());
                 self.call_runtime("ahpcl_read_file", &[out.into(), path.into()]);
-                Ok(self.builder.build_load(self.str_type(), out, "read.val").unwrap())
+                let v = self.builder.build_load(self.str_type(), out, "read.val").unwrap();
+                self.temporaries.push((v, Native::Str));
+                Ok(v)
             }
             "parse" => {
                 let first = args
@@ -2773,16 +2801,24 @@ impl Native {
     /// A `num` is boxed exactly like an array, and forgetting it left a loop growing by
     /// ~190 bytes an iteration even after arrays were counted.
     fn is_counted(self) -> bool {
-        self.is_array() || self == Native::Num
+        self.is_array() || matches!(self, Native::Num | Native::Str)
     }
 
     /// The runtime call that releases one reference to this kind of value.
     fn release_fn(self) -> &'static str {
-        if self.is_array() { "ahpcl_array_release" } else { "ahpcl_num_release" }
+        match self {
+            Native::Str => "ahpcl_str_release",
+            _ if self.is_array() => "ahpcl_array_release",
+            _ => "ahpcl_num_release",
+        }
     }
 
     fn retain_fn(self) -> &'static str {
-        if self.is_array() { "ahpcl_array_retain" } else { "ahpcl_num_retain" }
+        match self {
+            Native::Str => "ahpcl_str_retain",
+            _ if self.is_array() => "ahpcl_array_retain",
+            _ => "ahpcl_num_retain",
+        }
     }
 
     /// One step into an array: a rank above one yields an array of one less rank, and

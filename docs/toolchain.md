@@ -294,3 +294,21 @@ every existing `*const Cell` signature kept working.
 
 Measured on a loop that slices an array and sums it: **flat at 1MB** across 20,000, 200,000
 and 800,000 iterations, against 418MB before any of this.
+
+## Text is counted too
+
+`AhpclStr` carries `{ptr, len, owner}`. `owner` is null for a literal — those bytes live in
+the binary's constant data and there is nothing to free — and otherwise points at a
+`StrBox` holding the bytes and their reference count.
+
+Retain and release take the *owner*, not the string value, so a literal makes them harmless
+no-ops and no branch is needed in generated code.
+
+Before this, text built while a program ran was boxed and forgotten. A loop calling `read`
+grew by the size of the file every pass: 200,000 reads of a 20KB file would have reached
+about 4GB. It is now flat at 1MB.
+
+Two functions hand back owned text through an out-pointer rather than returning it
+(`ahpcl_read_file`, `ahpcl_array_get_str`), so the ownership hook on `call_runtime` cannot
+see them and they record their result explicitly. Any future runtime function that hands
+back memory through an out-pointer needs the same.
