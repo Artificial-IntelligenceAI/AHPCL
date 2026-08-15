@@ -1054,7 +1054,18 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     }
 
                     let val = self.expr(&target.value, held)?;
-                    self.builder.build_store(slot, val).unwrap();
+                    if held.is_counted() {
+                        // Retain the new value *before* releasing the old, so that
+                        // `change:var:vector:int 'a' = ('a'):all;` — or any assignment
+                        // where the two are the same array — does not free the value it
+                        // is about to store.
+                        let old = self.builder.build_load(self.ptr(), slot, "old").unwrap();
+                        self.call_runtime(held.retain_fn(), &[val.into()]);
+                        self.builder.build_store(slot, val).unwrap();
+                        self.call_runtime(held.release_fn(), &[old.into()]);
+                    } else {
+                        self.builder.build_store(slot, val).unwrap();
+                    }
                 }
                 Ok(false)
             }

@@ -311,6 +311,23 @@ const CASES: &[(&str, &str)] = &[
          print[('a')].\nprint[('b')].\nprint[('c')].",
     ),
     (
+        // Reassigning a counted value must retain the new one before releasing the old,
+        // or the array is freed by the very statement storing it — and self-assignment
+        // frees the value it is about to keep.
+        "reassigning_arrays",
+        "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+         var:vector:int 'b' [3] = {'9','9','9'}.\n\
+         change:var:vector:int 'a' = ('b'):all;.\n\
+         var:vector:int 'c' [3] = ('a').\n\
+         print[('a')].\nprint[('b')].\nprint[('c')].",
+    ),
+    (
+        "self_assignment_survives",
+        "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+         change:var:vector:int 'a' = ('a'):all;.\n\
+         print[('a')].",
+    ),
+    (
         "powers_stay_exact",
         "var:deci 'a' = '1.1'.\n\
          var:deci 'p' = math { ('a') xx 20 }.\n\
