@@ -889,8 +889,41 @@ pub const OP_POW: u32 = 4;
 pub const OP_INTDIV: u32 = 5;
 pub const OP_MOD: u32 = 6;
 
+/// A boxed `num`, with its reference count beside it.
+///
+/// `cell` is first and the struct is `repr(C)`, so a pointer to the box *is* a pointer to
+/// the cell. Every runtime function that takes `*const Cell` keeps working unchanged, and
+/// only retain/release need to know the box is there.
+#[repr(C)]
+struct CellBox {
+    cell: Cell,
+    count: u64,
+}
+
 fn hand_out_cell(c: Cell) -> *mut Cell {
-    Box::into_raw(Box::new(c))
+    Box::into_raw(Box::new(CellBox { cell: c, count: 1 })) as *mut Cell
+}
+
+/// Another place now holds this `num`.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_num_retain(p: *mut Cell) {
+    if !p.is_null() {
+        (*(p as *mut CellBox)).count += 1;
+    }
+}
+
+/// One fewer place holds this `num`; the last release frees it.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_num_release(p: *mut Cell) {
+    if p.is_null() {
+        return;
+    }
+    let boxed = p as *mut CellBox;
+    if (*boxed).count > 1 {
+        (*boxed).count -= 1;
+        return;
+    }
+    drop(Box::from_raw(boxed));
 }
 
 #[no_mangle]

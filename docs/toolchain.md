@@ -277,10 +277,20 @@ Three things about the implementation are easy to get wrong, and each was got wr
 - **The counted loop manages its scope frames by hand**, not through `scoped`, so its body
   was never released and an array declared inside a loop leaked once per iteration.
 
-### Still outstanding
+### Ownership is decided at the allocation site
 
-`num` values are separately boxed by the runtime (`ahpcl_num_*` hands out a `Cell`), and
-that allocation class is *not* counted. A loop doing `math { ('t') + ('w') }` on an array
-still grows by about 190 bytes per iteration. Measured: 800,000 iterations went from 418MB
-to 148MB with array counting in place, so the remainder is the `num` boxes. They need the
-same treatment.
+Every runtime function that hands back memory is listed in `allocates()` in the backend,
+which records the result as the current statement's to release. That is the whole rule.
+
+The first attempt recorded ownership where an *expression* finished instead, and it did not
+work: intermediates built inside helpers — the boxed `num` from `ahpcl_array_sum`, say —
+never pass through `expr`, so they were never recorded and leaked once per iteration. It
+also double-counted anything under `math { … }`, which freed live arrays. Ownership belongs
+to the callee's contract, not to a position in the expression tree.
+
+Boxed `num` values are counted the same way. A `CellBox` puts the count beside the cell with
+the cell first and `repr(C)` layout, so a pointer to the box *is* a pointer to the cell and
+every existing `*const Cell` signature kept working.
+
+Measured on a loop that slices an array and sums it: **flat at 1MB** across 20,000, 200,000
+and 800,000 iterations, against 418MB before any of this.

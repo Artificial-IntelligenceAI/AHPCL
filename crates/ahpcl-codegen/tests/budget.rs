@@ -13,6 +13,24 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+/// Peak memory of a run, in bytes, via the system's own accounting.
+fn peak_bytes(binary: &std::path::Path) -> u64 {
+    let out = Command::new("/usr/bin/time")
+        .arg("-l")
+        .arg(binary)
+        .output()
+        .expect("/usr/bin/time should run");
+    let text = String::from_utf8_lossy(&out.stderr);
+    for line in text.lines() {
+        if line.contains("maximum resident set size") {
+            if let Some(n) = line.split_whitespace().next() {
+                return n.parse().unwrap_or(0);
+            }
+        }
+    }
+    0
+}
+
 use ahpcl_codegen::compile;
 use ahpcl_syntax::parse_source;
 
@@ -108,5 +126,53 @@ fn a_counting_loop_stays_a_counting_loop() {
     assert!(
         took < Duration::from_secs(2),
         "a ten-million-iteration counting loop took {took:?}"
+    );
+}
+
+/// Compile and link, handing back the binary rather than timing it.
+fn build_only(name: &str, src: &str) -> PathBuf {
+    let (program, errors) = parse_source(src);
+    assert!(errors.is_empty(), "should parse: {errors:#?}");
+    let dir = workdir();
+    let object = dir.join(format!("{name}.o"));
+    let binary = dir.join(name);
+    compile(&program, &object, name).unwrap_or_else(|u| panic!("should compile: {}", u.what));
+    let status = Command::new("cc")
+        .arg(&object)
+        .arg("-o")
+        .arg(&binary)
+        .arg(runtime_library())
+        .status()
+        .expect("cc should run");
+    assert!(status.success(), "linking should succeed");
+    binary
+}
+
+fn slicing_loop(iterations: u64) -> String {
+    format!(
+        "var:vector:int 'data' [1000] = \
+             loop:var:int 'i' = math {{ 1 to 1000 }} {{ handback ('i'). }}.\n\
+         var:int 't' [64 bit] = '0'.\n\
+         loop:var:int 'p' = math {{ 1 to {iterations} }} {{\n\
+             var:vector:int 'w' [3] = ('data'):1 to 3;.\n\
+             change:var:int 't' = math {{ ('t') + ('w') }}.\n\
+         }}.\n\
+         print[('t')]."
+    )
+}
+
+#[test]
+fn memory_does_not_grow_with_the_number_of_iterations() {
+    // The question a single reading cannot answer. Slicing in a loop leaked an array and
+    // a boxed `num` per pass — 800k iterations reached 418MB — and every test still
+    // passed, because the printed answer was right the whole time. What matters is not
+    // the size but the *slope*: memory must not track the iteration count.
+    let small = peak_bytes(&build_only("budget_mem_small", &slicing_loop(20_000)));
+    let large = peak_bytes(&build_only("budget_mem_large", &slicing_loop(800_000)));
+    assert!(small > 0 && large > 0, "could not read peak memory");
+    assert!(
+        large < small * 4,
+        "memory grew with iteration count: {small} bytes at 20k, {large} at 800k \
+         (40x the work). Something is allocated per iteration and never released."
     );
 }

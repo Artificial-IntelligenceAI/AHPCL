@@ -136,9 +136,9 @@ struct Codegen<'ctx, 'a> {
     handbacks: Vec<Handback<'ctx>>,
     /// Where `handback` jumps to end an iteration: the innermost loop's advance block.
     continues: Vec<inkwell::basic_block::BasicBlock<'ctx>>,
-    /// Arrays the current statement produced. Anything still here when the statement
-    /// ends was a temporary, and is released.
-    temporaries: Vec<BasicValueEnum<'ctx>>,
+    /// Heap values the current statement produced — arrays and boxed `num`s. Anything
+    /// still here when the statement ends was a temporary, and is released.
+    temporaries: Vec<(BasicValueEnum<'ctx>, Native)>,
     /// How many places to compute an irrational to, from the declaration in hand.
     /// `[36 digits]` on a `var:deci` sets it for that declaration's value.
     digits: u32,
@@ -517,7 +517,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .add_function("ahpcl_array_push_int", void.fn_type(&[p.into(), i64t.into()], false), None);
         self.module
             .add_function("ahpcl_array_push_array", void.fn_type(&[p.into(), p.into()], false), None);
-        for name in ["ahpcl_array_retain", "ahpcl_array_release"] {
+        for name in [
+            "ahpcl_array_retain",
+            "ahpcl_array_release",
+            "ahpcl_num_retain",
+            "ahpcl_num_release",
+        ] {
             self.module.add_function(name, void.fn_type(&[p.into()], false), None);
         }
         self.module.add_function(
@@ -688,13 +693,23 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         Some(self.builder.build_load(self.deci_type(), out, "rt.val").unwrap())
     }
 
-    fn call_runtime(&self, name: &str, args: &[BasicMetadataValueEnum<'ctx>]) -> Option<BasicValueEnum<'ctx>> {
+    fn call_runtime(&mut self, name: &str, args: &[BasicMetadataValueEnum<'ctx>]) -> Option<BasicValueEnum<'ctx>> {
         let f = self.module.get_function(name)?;
         let call = self.builder.build_call(f, args, "rt").unwrap();
-        match call.try_as_basic_value() {
+        let out = match call.try_as_basic_value() {
             inkwell::values::ValueKind::Basic(v) => Some(v),
             _ => None,
+        };
+        // Anything the runtime allocates belongs to the statement that asked for it.
+        // Recording here rather than where an expression finishes is what makes this
+        // reliable: intermediates built inside helpers never pass through `expr`, so
+        // recording there missed them and they leaked.
+        if let Some(v) = out {
+            if let Some(kind) = allocates(name) {
+                self.temporaries.push((v, kind));
+            }
         }
+        out
     }
 
     fn declare_functions(&mut self, program: &Program) -> Result<(), Unsupported> {
@@ -879,18 +894,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             return;
         }
         while self.temporaries.len() > mark {
-            let v = self.temporaries.pop().expect("a recorded temporary");
-            self.call_runtime("ahpcl_array_release", &[v.into()]);
+            let (v, repr) = self.temporaries.pop().expect("a recorded temporary");
+            self.call_runtime(repr.release_fn(), &[v.into()]);
         }
     }
 
-    /// Note an array the current statement produced.
-    fn own(&mut self, v: BasicValueEnum<'ctx>, repr: Native) -> BasicValueEnum<'ctx> {
-        if repr.is_array() {
-            self.temporaries.push(v);
-        }
-        v
-    }
+
 
     fn scoped(&mut self, stmts: &[Stmt]) -> Result<bool, Unsupported> {
         self.vars.push(HashMap::new());
@@ -923,14 +932,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .iter()
                     .filter_map(|(name, slot)| {
                         let repr = self.var_types.last()?.get(name).copied()?;
-                        repr.is_array().then_some((*slot, repr))
+                        repr.is_counted().then_some((*slot, repr))
                     })
                     .collect()
             })
             .unwrap_or_default();
-        for (slot, _) in held {
-            let v = self.builder.build_load(self.ptr(), slot, "scope.arr").unwrap();
-            self.call_runtime("ahpcl_array_release", &[v.into()]);
+        for (slot, repr) in held {
+            let v = self.builder.build_load(self.ptr(), slot, "scope.held").unwrap();
+            self.call_runtime(repr.release_fn(), &[v.into()]);
         }
     }
 
@@ -971,8 +980,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         val.get_type()
                     );
                     let slot = self.alloca(&b.name, want);
-                    if native.is_array() {
-                        self.call_runtime("ahpcl_array_retain", &[val.into()]);
+                    if native.is_counted() {
+                        self.call_runtime(native.retain_fn(), &[val.into()]);
                     }
                     self.builder.build_store(slot, val).unwrap();
                     self.vars.last_mut().unwrap().insert(b.name.clone(), slot);
@@ -1481,20 +1490,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     }
 
     fn expr(&mut self, e: &Expr, want: Native) -> Result<BasicValueEnum<'ctx>, Unsupported> {
-        let v = self.expr_inner(e, want)?;
-        // Anything that *builds* an array is this statement's to release. Two kinds are
-        // not: a plain reference hands back the array a variable already holds, and
-        // `math { … }` passes its inner value straight through — recording that would
-        // count one array twice and free it while it was still in use.
-        let borrowed = match &e.kind {
-            ExprKind::Ref { selectors, .. } => selectors.is_empty(),
-            ExprKind::Math(_) => true,
-            _ => false,
-        };
-        if v.is_pointer_value() && !borrowed && self.value_repr(e).is_array() {
-            self.temporaries.push(v);
-        }
-        Ok(v)
+        self.expr_inner(e, want)
     }
 
     fn expr_inner(&mut self, e: &Expr, want: Native) -> Result<BasicValueEnum<'ctx>, Unsupported> {
@@ -2761,6 +2757,23 @@ impl Native {
         matches!(self, Native::Array(..))
     }
 
+    /// Whether the runtime owns this value on the heap, so it is counted.
+    ///
+    /// A `num` is boxed exactly like an array, and forgetting it left a loop growing by
+    /// ~190 bytes an iteration even after arrays were counted.
+    fn is_counted(self) -> bool {
+        self.is_array() || self == Native::Num
+    }
+
+    /// The runtime call that releases one reference to this kind of value.
+    fn release_fn(self) -> &'static str {
+        if self.is_array() { "ahpcl_array_release" } else { "ahpcl_num_release" }
+    }
+
+    fn retain_fn(self) -> &'static str {
+        if self.is_array() { "ahpcl_array_retain" } else { "ahpcl_num_retain" }
+    }
+
     /// One step into an array: a rank above one yields an array of one less rank, and
     /// a vector yields its element. Mirrors `Type::peel` in the checker.
     fn peel(self) -> Native {
@@ -2856,6 +2869,44 @@ fn selector_result(held: Native, selectors: &[Selector]) -> Native {
     // The dimensions addressed by a single index disappear; the rest survive.
     let left = rank.saturating_sub(singles).max(1);
     Native::Array(current.element().kind_tag(), left as u32)
+}
+
+/// Whether a runtime function hands back a freshly allocated value, and of which kind.
+///
+/// Every function here returns memory the caller now owns. Listing them in one place is
+/// the point: ownership is decided by the callee's contract, not by where in the
+/// expression tree the call happened to be made.
+fn allocates(name: &str) -> Option<Native> {
+    let array = matches!(
+        name,
+        "ahpcl_array_new"
+            | "ahpcl_array_empty"
+            | "ahpcl_array_shape"
+            | "ahpcl_array_select_run"
+            | "ahpcl_array_elementwise"
+            | "ahpcl_array_hadamard"
+            | "ahpcl_array_dot"
+            | "ahpcl_array_cross"
+            | "ahpcl_array_tensor"
+            | "ahpcl_array_compare"
+            | "ahpcl_array_unary"
+    );
+    if array {
+        // The rank is not known here and is not needed: releasing only reads the count.
+        return Some(Native::Array(0, 1));
+    }
+    matches!(
+        name,
+        "ahpcl_num_from_int"
+            | "ahpcl_num_from_deci"
+            | "ahpcl_num_from_rat"
+            | "ahpcl_num_from_bool"
+            | "ahpcl_num_binary"
+            | "ahpcl_num_unary"
+            | "ahpcl_array_sum"
+            | "ahpcl_array_get_num"
+    )
+    .then_some(Native::Num)
 }
 
 /// Which native representation a declared type maps onto, if any.
