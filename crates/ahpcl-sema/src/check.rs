@@ -29,6 +29,7 @@ const E_BAD_WIDTH: Code = Code::new(Category::Prec, 5);
 const E_SIGN_VIOLATION: Code = Code::new(Category::Sign, 1);
 const E_NO_VALUE: Code = Code::new(Category::Type, 5);
 const E_UNREACHABLE: Code = Code::new(Category::Syn, 2);
+const E_UNCLEAR_COPY: Code = Code::new(Category::Type, 6);
 
 pub struct Checked {
     pub errors: Vec<Error>,
@@ -155,6 +156,34 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `var:vector:int 'b' = ('a').` — one array named as another, with no operation in
+    /// between. Refused rather than given a meaning.
+    ///
+    /// Two readings are available and the source cannot tell them apart: `'b'` could be an
+    /// independent copy, or a second name for the same array, where changing one changes
+    /// the other. Nothing in AHPCL's syntax expresses the difference, and the two
+    /// implementations picked opposite answers without anyone noticing.
+    ///
+    /// So it is an error, like a declaration with no value: say `('a'):all;` for a copy.
+    /// Nothing in the language is lost — the form appears in no example and no document —
+    /// and either meaning can still be given to it later without breaking a program that
+    /// exists today.
+    fn check_unclear_copy(&mut self, target: &Type, value: &Expr, name: &str) {
+        if !target.is_array() || !is_bare_ref(value) {
+            return;
+        }
+        self.err(
+            E_UNCLEAR_COPY,
+            value.span,
+            format!(
+                "'{name}' would either copy this array or become another name for it, \
+                 and the program does not say which."
+            ),
+            "write ('name'):all; to copy it. Naming one array as another is not yet \
+             a way to share it.",
+        );
+    }
+
     fn var_decl(&mut self, v: &VarDecl) {
         for binding in &v.bindings {
             let Some(mut ty) = from_type_ref(&v.ty, binding.shape.as_ref(), binding.precision.as_ref())
@@ -166,6 +195,7 @@ impl<'a> Checker<'a> {
             self.check_rank(&v.ty, &ty, binding.name_span);
 
             if let Some(value) = &binding.value {
+                self.check_unclear_copy(&ty, value, &binding.name);
                 if let Some(got) = self.expr(value, Some(&ty)) {
                     // A shape disagreement is reported by the shape check below, so
                     // do not also report it as a type mismatch.
@@ -255,6 +285,11 @@ impl<'a> Checker<'a> {
             } else {
                 existing.ty.element()
             };
+            // The same ambiguity as a declaration: reassigning one array to another
+            // name says nothing about whether it copies or aliases.
+            if target.selectors.is_empty() {
+                self.check_unclear_copy(&want, &target.value, &target.name);
+            }
 
             if stated.base != want.base || stated.sign != want.sign {
                 self.errors.push(

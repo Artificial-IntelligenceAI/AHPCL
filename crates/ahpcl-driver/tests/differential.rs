@@ -318,7 +318,7 @@ const CASES: &[(&str, &str)] = &[
         "var:vector:int 'a' [3] = {'1','2','3'}.\n\
          var:vector:int 'b' [3] = {'9','9','9'}.\n\
          change:var:vector:int 'a' = ('b'):all;.\n\
-         var:vector:int 'c' [3] = ('a').\n\
+         var:vector:int 'c' [3] = ('a'):all;.\n\
          print[('a')].\nprint[('b')].\nprint[('c')].",
     ),
     (

@@ -412,3 +412,24 @@ fn asking_for_more_places_than_are_known_is_rejected() {
     rejects("var:infnum 'x' [30 digits] = math { sqrt 2 }.", "AHPCL-PREC-0004");
     clean("var:infnum 'x' [18 digits] = math { sqrt 2 }.");
 }
+
+#[test]
+fn naming_one_array_as_another_is_refused() {
+    // Two readings, no syntax to tell them apart: `'b'` could be an independent copy or
+    // a second name for the same array. The interpreter copied, the backend aliased, and
+    // neither was wrong because nothing had decided. Refused rather than guessed.
+    rejects(
+        "var:vector:int 'a' [3] = {'1','2','3'}.\nvar:vector:int 'b' = ('a').",
+        "AHPCL-TYPE-0006",
+    );
+    rejects(
+        "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+         var:vector:int 'b' [3] = {'0','0','0'}.\n\
+         change:var:vector:int 'b' = ('a').",
+        "AHPCL-TYPE-0006",
+    );
+    // `:all;` says copy, and is unaffected.
+    clean("var:vector:int 'a' [3] = {'1','2','3'}.\nvar:vector:int 'b' [3] = ('a'):all;.");
+    // Rule A: summing a bare reference into a scalar is a different thing entirely.
+    clean("var:vector:int 'a' [3] = {'1','2','3'}.\nvar:int 's' [64 bit] = math { ('a') }.");
+}

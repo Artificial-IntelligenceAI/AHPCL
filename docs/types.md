@@ -655,3 +655,39 @@ on a rational, a dimension in a shape, the `parse` option bitmask. Widening thos
 string printing outright, because the compiler and the runtime then disagreed about the
 layout of a struct they share. **One width for values, the declared width for everything
 else**, and the two must be kept apart deliberately.
+
+## Naming one array as another is an error — **DECIDED**
+
+```
+var:vector:int 'a' [3] = {'1','2','3'}.
+var:vector:int 'b' = ('a').        # AHPCL-TYPE-0006
+```
+
+```
+rule conditions: 'b' would either copy this array or become another name for it, and the
+                 program does not say which.
+suggest fix: write ('name'):all; to copy it. Naming one array as another is not yet a way
+             to share it.
+```
+
+Two readings are available and the source cannot tell them apart. `'b'` might be an
+independent copy, so that changing `'a'` afterwards leaves it alone; or it might be a second
+name for the same array, so that changing either changes both. Nothing in AHPCL's syntax
+expresses the difference — there is no reference type, no pointer, no `&`.
+
+The two implementations had quietly picked opposite answers: the interpreter copied, the
+backend aliased. Neither was wrong, because nothing had decided.
+
+Refusing costs nothing. The form appears in no example and no document, and `('a'):all;`
+already says *copy* explicitly. Rejecting it also keeps both doors open — copy semantics or
+shared semantics can still be given to it later without breaking a program that exists
+today, which choosing now would not.
+
+Rejected alternatives: **copy**, which is what the interpreter did and is probably what the
+form would eventually mean — but it would have been chosen by default rather than decided,
+and a silent default is the thing AHPCL avoids; and **share**, which no syntax marks, so
+`change:var:int 'a':1; = '99'.` would silently alter a variable named nowhere in that line.
+
+This is the same move as [a declaration with no value](#a-declaration-must-give-a-value--decided):
+where the program has not said which of two things it means, the compiler says so instead of
+picking.
