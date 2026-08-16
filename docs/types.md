@@ -628,7 +628,7 @@ Sign prefixes are expected to extend to it.
 
 ```
 rule conditions: 'x' is declared but never given a value.
-suggest fix: give it one, as in var:int 'x' = <value>.
+suggested fix: give it one, as in var:int 'x' = <value>.
 ```
 
 Nothing can be read before it is written, so AHPCL has no unset state — which means no
@@ -666,7 +666,7 @@ var:vector:int 'b' = ('a').        # AHPCL-TYPE-0006
 ```
 rule conditions: 'b' would either copy this array or become another name for it, and the
                  program does not say which.
-suggest fix: write ('name'):all; to copy it. Naming one array as another is not yet a way
+suggested fix: write ('name'):all; to copy it. Naming one array as another is not yet a way
              to share it.
 ```
 

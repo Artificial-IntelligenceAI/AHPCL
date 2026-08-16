@@ -1301,7 +1301,7 @@ that is a compile error, `AHPCL-SYN-0002`:
 ```
     4 |     change:var:int 'n' = math { ('n') - 1 }.
 rule conditions: this can never run, because the handback above it ends the block.
-suggest fix: move it above the handback, or take it out.
+suggested fix: move it above the handback, or take it out.
 ```
 
 That rule is what keeps the condition-loop form honest. Written the other way round the

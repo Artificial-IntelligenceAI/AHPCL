@@ -24,7 +24,7 @@ fn main() -> ExitCode {
             eprintln!("Hello, I think that there's something wrong.");
             eprintln!();
             eprintln!("rule conditions: {}", e.message);
-            eprintln!("suggest fix: {}", e.suggestion);
+            eprintln!("suggested fix: {}", e.suggestion);
             eprintln!();
             eprintln!("1 error found.");
             return ExitCode::FAILURE;
@@ -39,7 +39,7 @@ fn main() -> ExitCode {
             eprintln!("Hello, I think that there's something wrong.");
             eprintln!();
             eprintln!("rule conditions: '{other}' is not a task AHPCL knows.");
-            eprintln!("suggest fix: try task:check., task:run. or task:build.");
+            eprintln!("suggested fix: try task:check., task:run. or task:build.");
             eprintln!();
             eprintln!("1 error found.");
             return ExitCode::FAILURE;
@@ -51,7 +51,7 @@ fn main() -> ExitCode {
         eprintln!("Hello, I think that there's something wrong.");
         eprintln!();
         eprintln!("rule conditions: a task needs at least one source file.");
-        eprintln!("suggest fix: add buildfile:main.ahpcl.");
+        eprintln!("suggested fix: add buildfile:main.ahpcl.");
         eprintln!();
         eprintln!("1 error found.");
         return ExitCode::FAILURE;
@@ -66,7 +66,7 @@ fn main() -> ExitCode {
                 eprintln!("Hello, I think that there's something wrong.");
                 eprintln!();
                 eprintln!("rule conditions: {path} could not be read — {e}.");
-                eprintln!("suggest fix: check the path, and that the file exists.");
+                eprintln!("suggested fix: check the path, and that the file exists.");
                 eprintln!();
                 eprintln!("1 error found.");
                 failed = true;
@@ -198,7 +198,7 @@ fn not_yet_native(what: &str) {
     eprintln!("Hello, I think that there's something wrong.");
     eprintln!();
     eprintln!("rule conditions: {what} is not in the compiler yet, so this program cannot be built.");
-    eprintln!("suggest fix: rewrite that part, or open an issue — this is a gap in AHPCL, not in your program.");
+    eprintln!("suggested fix: rewrite that part, or open an issue — this is a gap in AHPCL, not in your program.");
     eprintln!();
     eprintln!("1 error found.");
 }
@@ -208,7 +208,7 @@ fn linker_trouble(message: &str) {
     eprintln!("Hello, I think that there's something wrong.");
     eprintln!();
     eprintln!("rule conditions: {message}");
-    eprintln!("suggest fix: check that a C compiler is installed and on PATH.");
+    eprintln!("suggested fix: check that a C compiler is installed and on PATH.");
     eprintln!();
     eprintln!("1 error found.");
 }

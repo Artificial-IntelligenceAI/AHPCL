@@ -58,7 +58,7 @@ file:
 line:
 column:
 rule conditions:
-suggest fix:
+suggested fix:
 ```
 
 The greeting appears **once**, not per error — with two or more errors it is not repeated.
@@ -82,7 +82,7 @@ column: 17
 
 rule conditions: matrix multiplication requires inner dimensions to agree.
                  'a' is [3, 4] and 'b' is [5, 2] — 4 ≠ 5.
-suggest fix: declare 'b' as [4, 2], or transpose it before multiplying.
+suggested fix: declare 'b' as [4, 2], or transpose it before multiplying.
 ```
 
 Source files use the extension **`.ahpcl`**.
@@ -118,7 +118,7 @@ column: 11
        |                      ^^^^^^^^^^^^^^^^^^ this can make it -10
 
 rule conditions: a +int must be above 0 at every point in the program.
-suggest fix: declare 'n' as :int, or check the value before assigning.
+suggested fix: declare 'n' as :int, or check the value before assigning.
 
 Error 2 of 3
 main.ahpcl:20:5
@@ -149,7 +149,7 @@ column: 11
        |                      ^^^^^^^^^^^^^^^^^^ but this can make it -10
 
 rule conditions: a +int must be above 0 at every point in the program.
-suggest fix: declare 'n' as :int, or check the value before assigning.
+suggested fix: declare 'n' as :int, or check the value before assigning.
 ```
 
 Most AHPCL errors are about *relationships* — a refinement promised in one place and broken in
@@ -315,7 +315,7 @@ column: 18
        |                          ^^^^^^^^^^^^^ no such file
 
 rule conditions: read requires the file to exist and be readable.
-suggest fix: check the path, or that the file exists before running.
+suggested fix: check the path, or that the file exists before running.
 ```
 
 Chosen as a **deliberate starting point**, not a final answer: it costs nothing to build, it

@@ -219,7 +219,7 @@ fn render_one(out: &mut String, source: &SourceFile, err: &Error) {
 
     out.push('\n');
     let _ = writeln!(out, "rule conditions: {}", err.rule_conditions);
-    let _ = writeln!(out, "suggest fix: {}", err.suggest_fix);
+    let _ = writeln!(out, "suggested fix: {}", err.suggest_fix);
 }
 
 #[cfg(test)]
