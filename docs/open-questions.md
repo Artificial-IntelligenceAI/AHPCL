@@ -125,13 +125,6 @@ which one moves. Found by stress-testing, 2026-08-13.
 `read` only ever produces `str`, so this is a type error. Needs a decision on how a file
 becomes numbers — split on what, parsed with which options — before it can be built.
 
-**37. A real `rule conditions:` line.** The label used to sit above a plain statement of the
-problem, which is not a rule's conditions; that line is now `what went wrong:`. The intended
-feature remains: show the conditions of the rule that was broken, quoted from the rule, so a
-reader learns the rule and not just this instance of breaking it. Needs deciding where the
-text comes from — written per error code, or generated from the checker's own conditions —
-and whether it appears always or only when asked. Raised by the user, 2026-08-13.
-
 *(Numbering has gaps where items were resolved or removed. Kept stable so references hold.)*
 
 ---

@@ -66,9 +66,30 @@ The greeting appears **once**, not per error — with two or more errors it is n
 `what went wrong:` was called `rule conditions:` until 2026-08-13. It was renamed because it
 never held any: what it carries is a plain statement of the problem, so it now says so.
 
-**`rule conditions:` is reserved for a line that really does show them** — the conditions of
-the rule that was broken, quoted from the rule itself, above the statement of what went
-wrong. Not built yet. The name is kept free so it is not spent on something else.
+`rule conditions:` now holds what its name says: the conditions of the rule that was broken,
+above the statement of what went wrong.
+
+```
+rule conditions: a declaration gives a value. Nothing can be read before it is written,
+                 so there is no unset state and no silent zero.
+what went wrong: 'x' is declared but never given a value.
+suggested fix: give it one, as in var:int 'x' = <value>.
+```
+
+**Stated once per code, per run.** The first error with a given code carries its rule; later
+errors with the same code do not. Meeting a rule once teaches it, and a file with twelve
+errors of one kind should not repeat the same paragraph twelve times.
+
+Rejected: **always**, which is simpler and makes every error the same shape, but pays for it
+in length exactly where a beginner is already reading a lot; and **behind a flag**, which
+keeps output short but hides the teaching from the reader who needs it, since a beginner does
+not know the flag exists.
+
+The text is **written by hand, one line per code**, not generated from the checker. The
+checker's own condition is something like `sign_fits(got, want)` — true, and no use to
+anyone trying to learn what AHPCL accepts. `every_code_in_use_states_its_rule` in
+`crates/ahpcl-diagnostics/src/error.rs` keeps the table honest, so a new code cannot quietly
+ship without one.
 
 **The source line is shown**, with a marker under the offending span — the single most-praised
 feature of Rust's diagnostics, and good errors were the stated reason for choosing Rust as the

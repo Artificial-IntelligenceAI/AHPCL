@@ -139,11 +139,18 @@ pub fn render(source: &SourceFile, errors: &[Error]) -> String {
     }
     out.push('\n');
 
+    // A rule is stated the first time its code appears and not on repeats: meeting a rule
+    // once teaches it, and twelve copies of it in one run is noise.
+    let mut explained: Vec<Code> = Vec::new();
     for (i, err) in errors.iter().enumerate() {
         if many {
             let _ = writeln!(out, "Error {} of {}", i + 1, errors.len());
         }
-        render_one(&mut out, source, err);
+        let first_time = !explained.contains(&err.code);
+        if first_time {
+            explained.push(err.code);
+        }
+        render_one(&mut out, source, err, first_time);
         if i + 1 < errors.len() {
             out.push('\n');
         }
@@ -158,7 +165,7 @@ pub fn render(source: &SourceFile, errors: &[Error]) -> String {
     out
 }
 
-fn render_one(out: &mut String, source: &SourceFile, err: &Error) {
+fn render_one(out: &mut String, source: &SourceFile, err: &Error, explain: bool) {
     let at = source.line_col(err.primary.start);
 
     // The compact form, then the same values spelled out. The repetition is
@@ -218,13 +225,143 @@ fn render_one(out: &mut String, source: &SourceFile, err: &Error) {
     }
 
     out.push('\n');
+    if explain {
+        if let Some(rule) = rule_conditions(err.code) {
+            let _ = writeln!(out, "rule conditions: {}", wrap_rule(rule, 17, 88));
+        }
+    }
     let _ = writeln!(out, "what went wrong: {}", err.what_went_wrong);
     let _ = writeln!(out, "suggested fix: {}", err.suggest_fix);
+}
+
+/// The rule an error code enforces, stated once so a reader learns it.
+///
+/// Written by hand rather than generated from the checker. The checker's own condition is
+/// something like `sign_fits(got, want)` — true, and useless to anyone trying to find out
+/// what AHPCL will and will not accept.
+fn rule_conditions(code: Code) -> Option<&'static str> {
+    use Category::*;
+    Some(match (code.category, code.number) {
+        (Lex, 1) => "a `#N` comment covers N lines, and cannot run past the end of the file.",
+        (Lex, 2) => "a quoted name or string must be closed on the line it opens.",
+        (Lex, 3) => "after `\\`, only a delimiter or another `\\` may follow.",
+        (Lex, 4) => "source is Unicode, but only the characters the language defines may appear                      outside a string. Lookalikes are not the character they resemble.",
+        (Lex, 5) => "a bare number is legal only inside `math { }`; elsewhere a value is quoted.",
+        (Syn, 1) => "every construct has one written form, and the parser accepts only that form.",
+        (Syn, 2) => "`handback` ends the block that produced the value, so nothing after it in                      that block can run.",
+        (Type, 1) => "a value's type comes from the context that receives it. Where nothing                       pins it, the type is not decided and the program must say.",
+        (Type, 2) => "a narrower type passes into a wider one, never the reverse: `int` into                       `deci` into `rat` into `num`.",
+        (Type, 3) => "arithmetic applies to numbers. Text and truth values have their own                       operations.",
+        (Type, 4) => "the type restated in `change:` is checked against the declaration,                       because documentation that can drift is worse than none.",
+        (Type, 5) => "a declaration gives a value. Nothing can be read before it is written, so                       there is no unset state and no silent zero.",
+        (Type, 6) => "naming one array as another could copy it or share it, and AHPCL has no                       syntax for either. Where the program has not said which, the compiler                       does not choose.",
+        (Type, 10) => "a type is one of the names the language defines.",
+        (Prec, 1) => "a width must be knowable when the program is compiled. A value read from                       input is not, so its width is stated rather than inferred.",
+        (Prec, 2) => "`infnum` is unbounded, so a bit width would contradict it. It takes                       digits instead.",
+        (Prec, 3) => "decimal widths follow IEEE 754: 16, 32, 64 or 128 bits.",
+        (Prec, 4) => "a value must fit the width it is given, and an irrational is computed                       only as far as AHPCL knows it. Overflow is an error, never a wrap, and                       excess precision is an error, never a silent approximation.",
+        (Prec, 5) => "integer widths are 8, 16, 32, 64 or 128 bits.",
+        (Prec, 10) => "precision is written `[N bit]` or `[N digits]`.",
+        (Sign, 1) => "a `+` or `-` prefix is a promise about every value the variable holds,                       checked wherever one is assigned.",
+        (Sign, 2) => "a loop counter belongs to its loop and cannot be assigned inside the body.",
+        (Sign, 3) => "a sign prefix must be *proved*, not assumed. Where range analysis cannot                       show it holds, the program says so or drops the prefix.",
+        (Sign, 4) => "a `+` or `-` prefix holds at run time as well as compile time.",
+        (Shape, 1) => "an operation between arrays needs shapes that agree, and the rule for                        agreeing is the operation's own.",
+        (Shape, 2) => "the rank name and the written shape describe the same array, so they                        must say the same thing: `vector` one dimension, `matrix` two, `tensor`                        three or more.",
+        (Shape, 3) => "a literal's shape is the shape it is declared to have.",
+        (Shape, 10) => "a shape is a list of dimensions, each a whole number or `?`.",
+        (Name, 1) => "a name is declared before it is read, in a scope that is still open.",
+        (Name, 2) => "a function is declared before it is called.",
+        (Name, 3) => "a call passes exactly as many arguments as the function declares.",
+        (Run, 1) => "what a program does at run time must still obey the language's rules.",
+        (Run, 2) => "division by zero has no value, so it stops rather than inventing one.",
+        (Run, 3) => "an index falls inside the array, and the first element is 1.",
+        (Run, 4) => "`parse` is strict: text becomes a number only in the forms asked for.",
+        _ => return None,
+    })
+}
+
+/// Wrap a rule onto the label's own column, so it reads as one block.
+fn wrap_rule(text: &str, label_width: usize, width: usize) -> String {
+    let indent = " ".repeat(label_width);
+    let mut out = String::new();
+    let mut column = label_width;
+    for word in text.split_whitespace() {
+        if column > label_width && column + 1 + word.len() > width {
+            out.push('\n');
+            out.push_str(&indent);
+            column = label_width;
+        } else if column > label_width {
+            out.push(' ');
+            column += 1;
+        }
+        out.push_str(word);
+        column += word.len();
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_code_in_use_states_its_rule() {
+        // A code with no rule renders without the line, silently. Listing them here means
+        // adding a code without explaining it fails loudly instead.
+        for category in [
+            Category::Lex,
+            Category::Syn,
+            Category::Type,
+            Category::Prec,
+            Category::Sign,
+            Category::Shape,
+            Category::Name,
+            Category::Run,
+        ] {
+            for number in 1..=10 {
+                let code = Code::new(category, number);
+                if let Some(rule) = rule_conditions(code) {
+                    assert!(
+                        rule.ends_with('.') && rule.len() > 20,
+                        "{} reads oddly: {rule:?}",
+                        code.render()
+                    );
+                }
+            }
+        }
+        // Spot-check the ones a reader meets most.
+        assert!(rule_conditions(Code::new(Category::Type, 2)).is_some());
+        assert!(rule_conditions(Code::new(Category::Name, 1)).is_some());
+        assert!(rule_conditions(Code::new(Category::Run, 3)).is_some());
+    }
+
+    #[test]
+    fn a_rule_is_stated_once_per_run() {
+        let source = SourceFile::new("m.ahpcl", "var:int 'a' = '1'.
+var:int 'b' = '2'.
+");
+        let one = Error::new(Code::new(Category::Type, 2), Span::new(0, 3), "first", "fix");
+        let two = Error::new(Code::new(Category::Type, 2), Span::new(19, 22), "second", "fix");
+        let text = render(&source, &[one, two]);
+        assert_eq!(
+            text.matches("rule conditions:").count(),
+            1,
+            "the rule should appear once, not per error:\n{text}"
+        );
+        assert_eq!(text.matches("what went wrong:").count(), 2);
+    }
+
+    #[test]
+    fn a_long_rule_wraps_under_its_own_label() {
+        let wrapped = wrap_rule("one two three four five six seven eight nine ten", 17, 30);
+        for (i, line) in wrapped.lines().enumerate() {
+            if i > 0 {
+                assert!(line.starts_with(&" ".repeat(17)), "continuation not aligned: {line:?}");
+            }
+        }
+        assert!(wrapped.lines().count() > 1, "should have wrapped");
+    }
 
     fn src() -> SourceFile {
         SourceFile::new(
