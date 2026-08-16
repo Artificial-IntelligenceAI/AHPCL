@@ -924,7 +924,7 @@ pub unsafe extern "C" fn ahpcl_fail(code: *const c_char, message: *const c_char)
     eprintln!("AHPCL Error Handler:");
     eprintln!("Something went wrong while running.");
     eprintln!();
-    eprintln!("rule conditions: {}", text(message));
+    eprintln!("what went wrong: {}", text(message));
     eprintln!("[{}]", text(code));
     eprintln!();
     eprintln!("1 error found.");

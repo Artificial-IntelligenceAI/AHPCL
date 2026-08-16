@@ -8,7 +8,7 @@ fn program(src: &str) -> Program {
     assert!(
         errors.is_empty(),
         "unexpected errors: {:#?}",
-        errors.iter().map(|e| (e.code.render(), e.rule_conditions.clone())).collect::<Vec<_>>()
+        errors.iter().map(|e| (e.code.render(), e.what_went_wrong.clone())).collect::<Vec<_>>()
     );
     p
 }

@@ -7,7 +7,7 @@ fn kinds(src: &str) -> Vec<TokenKind> {
     assert!(
         out.errors.is_empty(),
         "unexpected errors: {:?}",
-        out.errors.iter().map(|e| e.rule_conditions.clone()).collect::<Vec<_>>()
+        out.errors.iter().map(|e| e.what_went_wrong.clone()).collect::<Vec<_>>()
     );
     out.tokens.into_iter().map(|t| t.kind).filter(|k| *k != TokenKind::Eof).collect()
 }
@@ -225,7 +225,7 @@ fn a_pasted_minus_sign_is_named_precisely() {
     assert_eq!(out.errors.len(), 1);
     let e = &out.errors[0];
     assert_eq!(e.code.render(), "AHPCL-LEX-0004");
-    assert!(e.rule_conditions.contains("U+2212 MINUS SIGN"));
+    assert!(e.what_went_wrong.contains("U+2212 MINUS SIGN"));
     assert!(e.suggest_fix.contains("did you mean '-'"));
     assert!(e.suggest_fix.contains("copying from a web page"));
 }
@@ -234,5 +234,5 @@ fn a_pasted_minus_sign_is_named_precisely() {
 fn a_no_break_space_is_caught_rather_than_silently_ignored() {
     let out = lex("math { 5 +\u{00A0}3 }");
     assert_eq!(out.errors.len(), 1);
-    assert!(out.errors[0].rule_conditions.contains("NO-BREAK SPACE"));
+    assert!(out.errors[0].what_went_wrong.contains("NO-BREAK SPACE"));
 }

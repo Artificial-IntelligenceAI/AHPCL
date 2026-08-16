@@ -57,11 +57,18 @@ file:line:col
 file:
 line:
 column:
-rule conditions:
+what went wrong:
 suggested fix:
 ```
 
 The greeting appears **once**, not per error — with two or more errors it is not repeated.
+
+`what went wrong:` was called `rule conditions:` until 2026-08-13. It was renamed because it
+never held any: what it carries is a plain statement of the problem, so it now says so.
+
+**`rule conditions:` is reserved for a line that really does show them** — the conditions of
+the rule that was broken, quoted from the rule itself, above the statement of what went
+wrong. Not built yet. The name is kept free so it is not spent on something else.
 
 **The source line is shown**, with a marker under the offending span — the single most-praised
 feature of Rust's diagnostics, and good errors were the stated reason for choosing Rust as the
@@ -80,7 +87,7 @@ column: 17
     12 |     var:matrix:num 'c' = math { ('a') · ('b') }.
        |                                       ^^^^^^^^
 
-rule conditions: matrix multiplication requires inner dimensions to agree.
+what went wrong: matrix multiplication requires inner dimensions to agree.
                  'a' is [3, 4] and 'b' is [5, 2] — 4 ≠ 5.
 suggested fix: declare 'b' as [4, 2], or transpose it before multiplying.
 ```
@@ -117,7 +124,7 @@ column: 11
      3 | change:var:int 'n' = math { ('n') - 20 }.
        |                      ^^^^^^^^^^^^^^^^^^ this can make it -10
 
-rule conditions: a +int must be above 0 at every point in the program.
+what went wrong: a +int must be above 0 at every point in the program.
 suggested fix: declare 'n' as :int, or check the value before assigning.
 
 Error 2 of 3
@@ -148,7 +155,7 @@ column: 11
      3 | change:var:int 'n' = math { ('n') - 20 }.
        |                      ^^^^^^^^^^^^^^^^^^ but this can make it -10
 
-rule conditions: a +int must be above 0 at every point in the program.
+what went wrong: a +int must be above 0 at every point in the program.
 suggested fix: declare 'n' as :int, or check the value before assigning.
 ```
 
@@ -314,7 +321,7 @@ column: 18
     12 |     var:str 'raw' = read["missing.csv"].
        |                          ^^^^^^^^^^^^^ no such file
 
-rule conditions: read requires the file to exist and be readable.
+what went wrong: read requires the file to exist and be readable.
 suggested fix: check the path, or that the file exists before running.
 ```
 

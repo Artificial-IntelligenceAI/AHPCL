@@ -76,7 +76,7 @@ pub struct Error {
     /// The primary location, named in the header fields.
     pub primary: Span,
     pub labels: Vec<Label>,
-    pub rule_conditions: String,
+    pub what_went_wrong: String,
     pub suggest_fix: String,
 }
 
@@ -84,14 +84,14 @@ impl Error {
     pub fn new(
         code: Code,
         primary: Span,
-        rule_conditions: impl Into<String>,
+        what_went_wrong: impl Into<String>,
         suggest_fix: impl Into<String>,
     ) -> Self {
         Error {
             code,
             primary,
             labels: Vec::new(),
-            rule_conditions: rule_conditions.into(),
+            what_went_wrong: what_went_wrong.into(),
             suggest_fix: suggest_fix.into(),
         }
     }
@@ -109,7 +109,7 @@ fn deduplicate(errors: &[Error]) -> Vec<&Error> {
     let mut seen: Vec<(usize, u16, &str)> = Vec::new();
     let mut out = Vec::new();
     for e in errors {
-        let key = (e.primary.start.0, e.code.number, e.rule_conditions.as_str());
+        let key = (e.primary.start.0, e.code.number, e.what_went_wrong.as_str());
         if seen.contains(&key) {
             continue;
         }
@@ -218,7 +218,7 @@ fn render_one(out: &mut String, source: &SourceFile, err: &Error) {
     }
 
     out.push('\n');
-    let _ = writeln!(out, "rule conditions: {}", err.rule_conditions);
+    let _ = writeln!(out, "what went wrong: {}", err.what_went_wrong);
     let _ = writeln!(out, "suggested fix: {}", err.suggest_fix);
 }
 

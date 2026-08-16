@@ -10,7 +10,7 @@ fn codes(src: &str) -> Vec<String> {
     assert!(
         parse_errors.is_empty(),
         "the test source should parse: {:#?}",
-        parse_errors.iter().map(|e| (e.code.render(), e.rule_conditions.clone())).collect::<Vec<_>>()
+        parse_errors.iter().map(|e| (e.code.render(), e.what_went_wrong.clone())).collect::<Vec<_>>()
     );
     let mut informer = Informer::new();
     check(&program, &mut informer)

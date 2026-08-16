@@ -627,7 +627,7 @@ Sign prefixes are expected to extend to it.
 `var:int 'x'.` is an error, `AHPCL-TYPE-0005`:
 
 ```
-rule conditions: 'x' is declared but never given a value.
+what went wrong: 'x' is declared but never given a value.
 suggested fix: give it one, as in var:int 'x' = <value>.
 ```
 
@@ -664,7 +664,7 @@ var:vector:int 'b' = ('a').        # AHPCL-TYPE-0006
 ```
 
 ```
-rule conditions: 'b' would either copy this array or become another name for it, and the
+what went wrong: 'b' would either copy this array or become another name for it, and the
                  program does not say which.
 suggested fix: write ('name'):all; to copy it. Naming one array as another is not yet a way
              to share it.

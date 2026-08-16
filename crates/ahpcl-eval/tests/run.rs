@@ -11,7 +11,7 @@ fn output(src: &str) -> Vec<String> {
     assert!(
         out.error.is_none(),
         "should run cleanly: {:?}",
-        out.error.map(|e| e.rule_conditions)
+        out.error.map(|e| e.what_went_wrong)
     );
     out.lines
 }

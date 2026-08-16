@@ -1300,7 +1300,7 @@ that is a compile error, `AHPCL-SYN-0002`:
 
 ```
     4 |     change:var:int 'n' = math { ('n') - 1 }.
-rule conditions: this can never run, because the handback above it ends the block.
+what went wrong: this can never run, because the handback above it ends the block.
 suggested fix: move it above the handback, or take it out.
 ```
 
