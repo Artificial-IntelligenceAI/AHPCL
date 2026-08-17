@@ -49,9 +49,12 @@ pub fn compile(program: &Program, object_path: &Path, module_name: &str) -> Resu
         fn_params: HashMap::new(),
         current_ret: Native::None,
         handbacks: Vec::new(),
+        handback_depth: Vec::new(),
+        handback_temp: Vec::new(),
         owned_from: 0,
         continues: Vec::new(),
         temporaries: Vec::new(),
+        statement_mark: 0,
         digits: DEFAULT_DIGITS,
         current: None,
         string_count: 0,
@@ -135,6 +138,13 @@ struct Codegen<'ctx, 'a> {
     /// Where `handback` should put its value. A function returns; a conditional used as
     /// a value stores into a slot; a loop used as a value appends to an array.
     handbacks: Vec<Handback<'ctx>>,
+    /// How deep the scope stack was when each collector was pushed.
+    handback_depth: Vec<usize>,
+    /// How many temporaries were recorded when each collector was pushed. A `handback`
+    /// abandons every statement between there and here, so all of those are released —
+    /// the enclosing statement's own mark is not enough, because the statement being
+    /// abandoned may be several levels out.
+    handback_temp: Vec<usize>,
     /// The first scope frame the current function owns. Frames below it hold the
     /// parameters, which are *borrowed* from the caller — releasing those frees the
     /// caller's value out from under it.
@@ -144,6 +154,11 @@ struct Codegen<'ctx, 'a> {
     /// Heap values the current statement produced — arrays and boxed `num`s. Anything
     /// still here when the statement ends was a temporary, and is released.
     temporaries: Vec<(BasicValueEnum<'ctx>, Native)>,
+    /// Where the temporaries of the *enclosing statement* begin.
+    ///
+    /// `handback` releases down to this rather than to its own position, so anything the
+    /// statement built on the way to it is freed rather than forgotten.
+    statement_mark: usize,
     /// How many places to compute an irrational to, from the declaration in hand.
     /// `[36 digits]` on a `var:deci` sets it for that declaration's value.
     digits: u32,
@@ -521,6 +536,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .add_function("ahpcl_array_push_int", void.fn_type(&[p.into(), i64t.into()], false), None);
         self.module
             .add_function("ahpcl_array_push_array", void.fn_type(&[p.into(), p.into()], false), None);
+        self.module
+            .add_function("ahpcl_array_copy", ptr.fn_type(&[p.into()], false), None);
         for name in [
             "ahpcl_array_retain",
             "ahpcl_array_release",
@@ -764,24 +781,37 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
         for (i, p) in f.params.iter().enumerate() {
             let arg = function.get_nth_param(i as u32).expect("a parameter");
+            let repr = native_base_shaped(&p.ty, p.shape.as_ref()).unwrap_or(Native::Int);
             let slot = self.alloca(&p.name, arg.get_type());
+            // The function takes its own reference to a counted argument, so its slot is
+            // owned exactly like a local. Without this, `change:` on a parameter released
+            // a value the function did not own and freed it under the caller — a
+            // use-after-free that showed up as an empty string, raw freed heap, or an
+            // abort, depending on where the allocator happened to put things.
+            // An array is copied rather than shared, matching the interpreter: writing
+            // an element inside a function must not reach back and change the caller's.
+            // Text and `num` are never mutated in place, so a reference is enough.
+            let arg = if repr.is_array() {
+                self.call_runtime("ahpcl_array_copy", &[arg.into()])
+                    .unwrap_or(arg)
+            } else {
+                if repr.is_counted() {
+                    let handle = self.counted_handle(arg, repr);
+                    self.call_runtime(repr.retain_fn(), &[handle.into()]);
+                }
+                arg
+            };
             self.builder.build_store(slot, arg).unwrap();
             self.vars.last_mut().unwrap().insert(p.name.clone(), slot);
-            self.var_types
-                .last_mut()
-                .unwrap()
-                .insert(
-                    p.name.clone(),
-                    native_base_shaped(&p.ty, p.shape.as_ref()).unwrap_or(Native::Int),
-                );
+            self.var_types.last_mut().unwrap().insert(p.name.clone(), repr);
         }
 
-        // Parameters live in the frame just pushed; the body gets its own. Only the
-        // body's frame is this function's to release.
+        // Parameters are owned too, now that they are retained on entry, so the frame
+        // holding them is released like any other.
         self.vars.push(HashMap::new());
         self.var_types.push(HashMap::new());
         let outer_owned = self.owned_from;
-        self.owned_from = self.vars.len() - 1;
+        self.owned_from = self.vars.len() - 2;
 
         let terminated = self.block(&f.body)?;
         if !terminated {
@@ -895,18 +925,38 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             // one reference the variable holds; a slice nobody kept drops to zero and
             // is freed. Without this, a loop that slices leaks once per iteration.
             let mark = self.temporaries.len();
+            let outer_mark = self.statement_mark;
+            self.statement_mark = mark;
             let terminated = self.statement(stmt)?;
+            self.statement_mark = outer_mark;
             if terminated {
-                // The statement branched away — `handback`, or a return. There is no
-                // longer a block to put a release in, and emitting one would land after
-                // a terminator. Forget them instead: leaking on the way out of a block
-                // is worse than invalid IR, but only just, and it is bounded.
+                // A terminating statement released down to its own mark before it
+                // branched, so anything still recorded belongs to a block that has
+                // already gone. Forgetting is right here; releasing would land after a
+                // terminator and make the IR invalid.
                 self.temporaries.truncate(mark);
                 return Ok(true);
             }
             self.release_temporaries(mark);
         }
         Ok(false)
+    }
+
+    /// Emit releases for everything recorded since `mark`, *without* forgetting them.
+    ///
+    /// For a branch that leaves early. Control flow diverges here, so the path that falls
+    /// through still needs its own releases for the same values — popping them would let
+    /// the taken path consume the record and leave the other path leaking.
+    fn emit_releases_down_to(&mut self, mark: usize) {
+        if self.at_terminated_block() {
+            return;
+        }
+        let live: Vec<(BasicValueEnum<'ctx>, Native)> =
+            self.temporaries[mark..].iter().rev().copied().collect();
+        for (v, repr) in live {
+            let handle = self.counted_handle(v, repr);
+            self.call_runtime(repr.release_fn(), &[handle.into()]);
+        }
     }
 
     /// Release every array recorded since `mark`.
@@ -954,6 +1004,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .get_insert_block()
             .map(|b| b.get_terminator().is_some())
             .unwrap_or(true)
+    }
+
+    /// Release scopes from the innermost down to `depth`, which stays.
+    fn release_scopes_to(&mut self, depth: usize) {
+        for d in (depth..self.vars.len()).rev() {
+            self.release_scope_at(d);
+        }
     }
 
     /// Release every live scope, innermost first — for a `handback` that leaves the
@@ -1004,12 +1061,17 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 for b in &v.bindings {
                     // Per binding: `,` extends, and each binding carries its own shape.
                     let native = native_base_shaped(&v.ty, b.shape.as_ref())?;
-                    // `[n digits]` says how much of an irrational this declaration
-                    // wants; it applies to the value being computed, then resets.
-                    self.digits = match b.precision.as_ref().or(v.ty.precision.as_ref()) {
-                        Some(Precision::Digits(n)) => *n,
-                        _ => DEFAULT_DIGITS,
-                    };
+                    // How much of a value to compute. `[n digits]` says it outright;
+                    // `[n bit]` on a decimal is an IEEE format whose significant digits
+                    // are fixed. Reading only the first meant a `[128 bit]` decimal was
+                    // computed to 15 places on the compiled path and 34 on the
+                    // interpreted one — so `2 / 7 x 7` came out as 2.000000000000002,
+                    // larger than the true answer, in a language whose premise is that
+                    // it is not.
+                    self.digits = digits_for(
+                        &v.ty,
+                        b.precision.as_ref().or(v.ty.precision.as_ref()),
+                    );
                     // A shape on the binding is the declared size; the literal supplies
                     // the elements, and the checker has already cross-checked the two.
                     let Some(value) = &b.value else {
@@ -1137,13 +1199,27 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 Ok(false)
             }
             Stmt::Handback { value, .. } => {
-                // Everything this statement builds has to be released *here*, before the
-                // branch: once it has jumped there is no block left to put a release in,
-                // and the previous approach — forgetting them — leaked once per
-                // iteration of any loop containing a `handback`.
-                let mark = self.temporaries.len();
+                // Everything the enclosing statement built has to be released *here*,
+                // before the branch: once it has jumped there is no block left to put a
+                // release in. Using the handback's own position instead left whatever the
+                // statement allocated on the way in — a bare array reference boxing a
+                // `num`, say — leaking once per taken branch.
+                // Down to where the collector was set up, not to the innermost
+                // statement: a `handback` inside an `if` inside a loop abandons the
+                // `if` too, and whatever its condition allocated goes with it.
+                let mark = self
+                    .handback_temp
+                    .last()
+                    .copied()
+                    .unwrap_or(self.statement_mark);
+                // Emitted, not consumed — see `emit_releases_down_to`.
                 // Inside a conditional or loop used as a value, `handback` contributes
                 // to that value rather than leaving the function.
+                // Which scopes this handback is leaving: everything pushed since the
+                // collector was set up. Releasing only the innermost frame leaked every
+                // counted local of an enclosing block — a `handback` inside an `if`
+                // inside a loop body left the loop body's locals behind each iteration.
+                let collector_depth = self.handback_depth.last().copied().unwrap_or(0);
                 match self.handbacks.last().copied() {
                     Some(Handback::Store(slot, repr, merge)) => {
                         let v = self.expr(value, repr)?;
@@ -1153,8 +1229,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                             self.call_runtime(repr.retain_fn(), &[handle.into()]);
                         }
                         self.builder.build_store(slot, v).unwrap();
-                        self.release_temporaries(mark);
-                        self.release_scope();
+                        self.emit_releases_down_to(mark);
+                        self.release_scopes_to(collector_depth);
                         self.builder.build_unconditional_branch(merge).unwrap();
                         return Ok(true);
                     }
@@ -1165,8 +1241,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         if elem.is_array() {
                             self.call_runtime("ahpcl_array_push_array", &[array.into(), v.into()]);
                             // The push copies the elements, so nothing escapes.
-                            self.release_temporaries(mark);
-                            self.release_scope();
+                            self.emit_releases_down_to(mark);
+                            self.release_scopes_to(collector_depth);
                             if let Some(step) = self.continues.last().copied() {
                                 self.builder.build_unconditional_branch(step).unwrap();
                                 return Ok(true);
@@ -1203,8 +1279,8 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         }
                         // Every `push` copies the value into the collecting array, so
                         // the temporary is this statement's to release as usual.
-                        self.release_temporaries(mark);
-                        self.release_scope();
+                        self.emit_releases_down_to(mark);
+                        self.release_scopes_to(collector_depth);
                         // `handback` hands the value to whatever collects it and ends
                         // the unit that produced it — one iteration here, the whole
                         // call in a function. Falling through instead would run the
@@ -1221,7 +1297,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 let ret = function.get_type().get_return_type();
                 match ret {
                     None => {
-                        self.release_temporaries(mark);
+                        self.emit_releases_down_to(mark);
                         self.release_all_scopes();
                         self.builder.build_return(None).unwrap();
                     }
@@ -1234,7 +1310,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                             let handle = self.counted_handle(v, native);
                             self.call_runtime(native.retain_fn(), &[handle.into()]);
                         }
-                        self.release_temporaries(mark);
+                        self.emit_releases_down_to(mark);
                         self.release_all_scopes();
                         self.builder.build_return(Some(&v)).unwrap();
                     }
@@ -1714,6 +1790,14 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 match call.try_as_basic_value() {
                     inkwell::values::ValueKind::Basic(v) => {
                         let held = self.fn_repr.get(name).copied().unwrap_or(Native::Int);
+                        // The callee retained what it handed back, so the caller owns a
+                        // reference and has to release it. `call_runtime` records its own
+                        // allocations; a user call went through `build_call` directly and
+                        // was never recorded, so every call returning an array, string or
+                        // `num` leaked one — 5.8GB over 800k calls.
+                        if held.is_counted() {
+                            self.temporaries.push((v, held));
+                        }
                         if held == want {
                             Ok(v)
                         } else {
@@ -1783,7 +1867,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             }
             self.builder.position_at_end(body);
             self.handbacks.push(Handback::Store(slot, want, merge));
+            self.handback_depth.push(self.vars.len());
+            self.handback_temp.push(self.temporaries.len());
             let terminated = self.scoped(&arm.body);
+            self.handback_temp.pop();
+            self.handback_depth.pop();
             self.handbacks.pop();
             if !terminated? {
                 self.builder.build_unconditional_branch(merge).unwrap();
@@ -1793,7 +1881,13 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         // An `if` with no matching arm still has to reach the merge point.
         self.builder.build_unconditional_branch(merge).unwrap();
         self.builder.position_at_end(merge);
-        Ok(self.builder.build_load(ty, slot, "ifval.out").unwrap())
+        let out = self.builder.build_load(ty, slot, "ifval.out").unwrap();
+        // Each arm retained its value into the slot, so the result is owned here and
+        // must be released with the statement — otherwise every evaluation leaks one.
+        if want.is_counted() {
+            self.temporaries.push((out, want));
+        }
+        Ok(out)
     }
 
     /// A loop used for its value: each `handback` contributes one element.
@@ -1809,7 +1903,11 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
             .call_runtime("ahpcl_array_empty", &[kind.into()])
             .ok_or_else(|| Unsupported::new("collecting a loop's handbacks"))?;
         self.handbacks.push(Handback::Push(array, elem));
+        self.handback_depth.push(self.vars.len());
+        self.handback_temp.push(self.temporaries.len());
         let out = self.loop_stmt(l);
+        self.handback_temp.pop();
+        self.handback_depth.pop();
         self.handbacks.pop();
         out?;
         Ok(array)
@@ -3037,6 +3135,21 @@ fn allocates(name: &str) -> Option<Native> {
     .then_some(Native::Num)
 }
 
+/// The digits a declaration asks for, from either kind of precision.
+///
+/// Kept in step with `numeric_hint` in the interpreter: the two must agree or the same
+/// program prints different numbers depending on which one ran it.
+fn digits_for(ty: &TypeRef, precision: Option<&Precision>) -> u32 {
+    let is_deci = ty.base == "deci";
+    match precision {
+        Some(Precision::Digits(n)) => *n,
+        Some(Precision::Bits(32)) if is_deci => 7,
+        Some(Precision::Bits(64)) if is_deci => 16,
+        Some(Precision::Bits(128)) if is_deci => 34,
+        _ => DEFAULT_DIGITS,
+    }
+}
+
 /// Which native representation a declared type maps onto, if any.
 fn native_base(ty: &TypeRef) -> Result<Native, Unsupported> {
     native_base_shaped(ty, None)
@@ -3059,11 +3172,11 @@ fn native_base_shaped(ty: &TypeRef, shape: Option<&Vec<Dim>>) -> Result<Native, 
             .map(|s| s.len())
             .or_else(|| ty.shape.as_ref().map(|s| s.len()))
             .or_else(|| ty.rank.and_then(|r| r.dimensions()));
-        let Some(rank) = rank else {
-            return Err(Unsupported::new(
-                "a tensor whose rank is not written — give it a shape, as in [2,2,2]",
-            ));
-        };
+        // A `tensor` with no written shape: the rank is whatever the comprehension
+        // builds, which the runtime discovers as rows arrive. Three is the smallest a
+        // tensor can be, and `ahpcl_array_push_array` corrects the shape as it goes, so
+        // this only has to be large enough not to collapse a selector run.
+        let rank = rank.unwrap_or(3);
         return Ok(Native::Array(native_base(&scalar)?.kind_tag(), rank as u32));
     }
     match ty.base.as_str() {

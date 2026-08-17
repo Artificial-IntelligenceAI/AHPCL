@@ -342,3 +342,44 @@ differs. It used to derive the row count from the *last* row: ragged input produ
 that disagreed with the elements, and because the division rounded down it could describe
 *fewer* elements than were stored — inner lengths 4 then 8 gave 12 items claiming to be
 1x8, silently dropping four. The interpreter had always rejected this.
+
+## A function's parameters are its own
+
+A counted argument is **retained on entry**, so the slot holding it is owned exactly like a
+local and everything downstream — `change:`, scope exit — balances without special cases.
+
+The previous rule was the opposite: parameters were excluded from release, on the reasoning
+that they belong to the caller. That held until `change:` on a parameter released the slot's
+old value, which *was* the caller's, and freed it underneath. The symptom depended on the
+allocator: an empty string, raw freed bytes on standard output, or an abort — the same
+source at a different build gave exit 134 ten times running and exit 0 ten times running.
+
+**An array argument is copied**, not shared. The interpreter passes by value, so writing an
+element inside a function must not reach back into the caller's array; sharing made the two
+implementations disagree about whether an argument is a copy, which is a language question
+and not something a calling convention should settle by accident. Text and `num` are never
+mutated in place, so they are retained rather than copied.
+
+## Releasing on a branch, without consuming the record
+
+`handback` releases down to the mark taken **when its collector was pushed**, not the
+innermost statement's — it abandons every statement between there and itself, and each of
+those may have allocated.
+
+Those releases are *emitted* rather than *popped*: `emit_releases_down_to` leaves the
+compile-time list intact. Control flow diverges at a branch, so the path that falls through
+needs its own releases for the same values. Popping let the taken path consume the record
+and leave the other path leaking — which is how fixing one direction of a branch broke the
+other, measured as a leak that moved from the true arm to the false one.
+
+## Digits come from either kind of precision
+
+`[n digits]` says how much of an irrational to compute; `[n bit]` on a decimal is an IEEE
+format whose significant digits are fixed at 7, 16 or 34. The backend read only the first
+and defaulted to 15, so a `[128 bit]` decimal was computed to 15 places compiled and 34
+interpreted — and `2 / 7 x 7` came back as `2.000000000000002`, *larger* than the true
+answer, in the language whose premise is that it is not.
+
+`digits_for` in the backend and `numeric_hint` in the interpreter have to agree. They are
+the same table written twice, which is a standing risk; the differential case
+`a_decimal_width_decides_the_digits` is what catches them drifting apart.

@@ -284,7 +284,9 @@ impl<'a> Lexer<'a> {
                     "a comment line-count may not run past the end of the file. \
                      This asks for {lines} lines, but only {available} remain."
                 ),
-                "What the heck am I supposed to do?".to_string(),
+                format!(
+                    "lower the count to {available} or fewer, or add the lines it expects to cover."
+                ),
             ));
         }
 

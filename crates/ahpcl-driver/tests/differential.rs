@@ -328,6 +328,69 @@ const CASES: &[(&str, &str)] = &[
          print[('a')].",
     ),
     (
+        // A function does not own its parameters, but `change:` released the old value
+        // of the slot regardless — freeing the caller's string under it.
+        "changing_a_parameter_leaves_the_caller_alone",
+        "func:str 'f' [var:str 's'] {\n\
+             change:var:str 's' = \"replaced\".\n\
+             handback ('s').\n\
+         }.\n\
+         var:nna 't' = {\"ALPHA\", \"BETA\"}.\n\
+         var:str 'a' = ('t'):1;.\n\
+         var:str 'b' = 'f'[('a')].\n\
+         print[('a')].\nprint[('b')].",
+    ),
+    (
+        // An array argument is a copy, as it is in the interpreter — writing an element
+        // inside a function must not reach back into the caller's array.
+        "an_array_argument_is_a_copy",
+        "func:int 'f' [var:vector:int 'v' [3]] {\n\
+             change:var:int 'v':1; = '99'.\n\
+             handback ('v'):1;.\n\
+         }.\n\
+         var:vector:int 'a' [3] = {'1','2','3'}.\n\
+         var:int 'r' [64 bit] = 'f'[('a')].\n\
+         print[('r')].\nprint[('a')].",
+    ),
+    (
+        // The backend ignored a decimal's declared width and always used 15 places, so
+        // `2 / 7 x 7` came back larger than the true answer.
+        "a_decimal_width_decides_the_digits",
+        "var:deci 'a' [128 bit] = math { 1 / 3 }.\n\
+         var:deci 'b' [64 bit] = math { 1 / 3 }.\n\
+         var:deci 'c' [32 bit] = math { 1 / 3 }.\n\
+         var:deci 'd' [128 bit] = math { 2 / 7 }.\n\
+         var:deci 'e' [128 bit] = math { ('d') x 7 }.\n\
+         print[('a')].\nprint[('b')].\nprint[('c')].\nprint[('e')].",
+    ),
+    (
+        "a_rational_takes_a_negative_power",
+        "var:rat 'a' = math { 2 xx -3 }.\n\
+         var:rat 'b' = math { 3 / 2 }.\n\
+         var:rat 'c' = math { ('b') xx -2 }.\n\
+         print[('a')].\nprint[('c')].",
+    ),
+    (
+        // The same maths was accepted or refused depending on which side it was written.
+        "a_comparison_pins_from_either_side",
+        "var:int 'a' [64 bit] = '5'.\n\
+         var:bool 'c' = math { 20 - ('a') = 15 }.\n\
+         var:bool 'd' = math { 1 > 0 }.\n\
+         var:bool 'e' = math { ('a') x 2 > 4 }.\n\
+         print[('c')].\nprint[('d')].\nprint[('e')].",
+    ),
+    (
+        "a_tensor_comprehension_needs_no_written_shape",
+        "var:tensor:int 't' = loop:var:int 'i' = math { 1 to 2 } {\n\
+             handback loop:var:int 'j' = math { 1 to 3 } {\n\
+                 handback loop:var:int 'k' = math { 1 to 2 } {\n\
+                     handback math { ('i') x 100 + ('j') x 10 + ('k') }.\n\
+                 }.\n\
+             }.\n\
+         }.\n\
+         print[('t'):shape;].\nprint[('t')].",
+    ),
+    (
         "powers_stay_exact",
         "var:deci 'a' = '1.1'.\n\
          var:deci 'p' = math { ('a') xx 20 }.\n\

@@ -167,8 +167,19 @@ pub(crate) fn rat_apply(op: u32, a: AhpclRational, b: AhpclRational) -> AhpclRat
         array::OP_SUB => rat_sub(a, b),
         array::OP_MUL => rat_mul(a, b),
         array::OP_POW => {
+            // A negative exponent is fine for a rational: it is the reciprocal raised to
+            // the positive power, and 2^-3 is exactly 1/8 — a value the type can hold.
+            // Refusing it made the compiled path reject a program the interpreter ran.
+            if b.den == 1 && b.num < 0 && b.num > -(u32::MAX as i128) {
+                if a.num == 0 {
+                    fail_with("AHPCL-RUN-0002", "division by zero");
+                }
+                let flipped = AhpclRational::reduced(a.den, a.num);
+                let power = AhpclRational { num: -b.num, den: 1, failed: 0 };
+                return rat_apply(array::OP_POW, flipped, power);
+            }
             if b.den != 1 || b.num < 0 || b.num > u32::MAX as i128 {
-                fail_with("AHPCL-RUN-0001", "a rational power needs a whole, non-negative exponent");
+                fail_with("AHPCL-RUN-0001", "a rational power needs a whole exponent");
             }
             let mut out = AhpclRational { num: 1, den: 1, failed: 0 };
             for _ in 0..b.num {
@@ -921,14 +932,49 @@ pub unsafe extern "C" fn ahpcl_fail(code: *const c_char, message: *const c_char)
             String::from_utf8_lossy(std::ffi::CStr::from_ptr(p).to_bytes()).into_owned()
         }
     };
+    let code = text(code);
+    // The same shape as a compile-time error, as far as it can be: the code sits in the
+    // header, the rule is stated, and there is a suggested fix. A running program has no
+    // source position to give — the module carries no line numbers — so the location
+    // lines are the one part that is genuinely missing rather than merely absent.
     eprintln!("AHPCL Error Handler:");
     eprintln!("Something went wrong while running.");
     eprintln!();
+    eprintln!("[{code}]");
+    if let Some(rule) = runtime_rule(&code) {
+        eprintln!("rule conditions: {rule}");
+    }
     eprintln!("what went wrong: {}", text(message));
-    eprintln!("[{}]", text(code));
+    if let Some(fix) = runtime_fix(&code) {
+        eprintln!("suggested fix: {fix}");
+    }
     eprintln!();
     eprintln!("1 error found.");
     std::process::exit(1);
+}
+
+/// The rule behind a runtime code, matching what the compiler prints for the same code.
+fn runtime_rule(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "AHPCL-RUN-0002" => "division by zero has no value, so it stops rather than inventing one.",
+        "AHPCL-RUN-0003" => "an index falls inside the array, and the first element is 1.",
+        "AHPCL-RUN-0004" => "`parse` is strict: text becomes a number only in the forms asked for.",
+        "AHPCL-PREC-0004" => {
+            "a value must fit the width it is given. Overflow is an error, never a wrap."
+        }
+        _ => return None,
+    })
+}
+
+fn runtime_fix(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "AHPCL-RUN-0001" => "check the values this line was given.",
+        "AHPCL-RUN-0002" => "check the divisor before dividing, or use a conditional to guard it.",
+        "AHPCL-RUN-0003" => "check the index against ':length;' before using it.",
+        "AHPCL-RUN-0004" => "add the parse option the text needs, such as trim or group:\",\".",
+        "AHPCL-PREC-0004" => "widen the type, or keep the values smaller.",
+        _ => return None,
+    })
 }
 
 pub fn format_decimal(d: AhpclDecimal) -> String {

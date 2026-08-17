@@ -75,6 +75,18 @@ impl Array {
     }
 }
 
+/// An independent copy, sharing nothing with the original.
+///
+/// A function receives its own array, because that is what the interpreter does: values
+/// are passed by value. Sharing instead meant writing an element inside a function
+/// reached back and changed the caller's array — the two implementations disagreed about
+/// whether an argument was a copy or the same array, which is a language question, not
+/// something for the calling convention to settle by accident.
+#[no_mangle]
+pub unsafe extern "C" fn ahpcl_array_copy(a: *const Array) -> *mut Array {
+    (*a).clone().hand_out()
+}
+
 /// Another place now holds this array.
 #[no_mangle]
 pub unsafe extern "C" fn ahpcl_array_retain(a: *mut Array) {

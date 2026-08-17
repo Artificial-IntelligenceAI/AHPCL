@@ -363,7 +363,9 @@ fn a_conditional_used_for_its_value_needs_an_else() {
     rejects(
         "var:int 'x' = '0'.\n\
          var:int 'v' = if math { ('x') > 5 } { handback '5'. }.",
-        "AHPCL-TYPE-0002",
+        // Its own code now: reported as a widening mismatch, it inherited a rule about
+        // narrower and wider types, which explains nothing to someone missing an else.
+        "AHPCL-TYPE-0007",
     );
     clean(
         "var:int 'x' = '0'.\n\

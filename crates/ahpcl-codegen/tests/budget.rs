@@ -176,3 +176,81 @@ fn memory_does_not_grow_with_the_number_of_iterations() {
          (40x the work). Something is allocated per iteration and never released."
     );
 }
+
+/// The four leak shapes the fifth stress pass found.
+///
+/// Two of these collect into an array, so their memory *should* grow with the iteration
+/// count — the array is real data. Each is therefore measured against a control that
+/// collects exactly as much without the construct under test, and the question is
+/// whether the construct adds anything on top.
+#[test]
+fn counted_values_crossing_a_boundary_do_not_accumulate() {
+    const N: &str = "400000";
+    let cases: [(&str, &str, &str); 4] = [
+        (
+            "a function returning a counted value",
+            "func:vector:int 'make' [var:int 'n' [64 bit]] {\n\
+                 handback loop:var:int 'j' = math { 1 to 20 } { handback ('j'). }.\n\
+             }.\n\
+             loop:var:int 'i' = math { 1 to N } {\n\
+                 var:vector:int 'a' = 'make'[('i')].\n\
+             }.\n\
+             print[\"done\"].",
+            "loop:var:int 'i' = math { 1 to N } {\n\
+                 var:vector:int 'a' = loop:var:int 'j' = math { 1 to 20 } { handback ('j'). }.\n\
+             }.\n\
+             print[\"done\"].",
+        ),
+        (
+            "an if used as a value",
+            "loop:var:int 'i' = math { 1 to N } {\n\
+                 var:vector:int 'a' = if math { ('i') > 0 } {\n\
+                     handback loop:var:int 'j' = math { 1 to 20 } { handback ('j'). }.\n\
+                 }, else {\n\
+                     handback loop:var:int 'j' = math { 1 to 20 } { handback ('j'). }.\n\
+                 }.\n\
+             }.\n\
+             print[\"done\"].",
+            "loop:var:int 'i' = math { 1 to N } {\n\
+                 var:vector:int 'a' = loop:var:int 'j' = math { 1 to 20 } { handback ('j'). }.\n\
+             }.\n\
+             print[\"done\"].",
+        ),
+        (
+            "a handback out of a nested block",
+            "var:vector:int 'v' = loop:var:int 'i' = math { 1 to N } {\n\
+                 var:vector:int 'tmp' [3] = {'1','2','3'}.\n\
+                 if math { ('i') > 0 } { handback ('i'). }.\n\
+             }.\n\
+             print[('v'):1;].",
+            "var:vector:int 'v' = loop:var:int 'i' = math { 1 to N } {\n\
+                 handback ('i').\n\
+             }.\n\
+             print[('v'):1;].",
+        ),
+        (
+            "a statement abandoned by a handback",
+            "var:vector:int 'a' [3] = {'1','2','3'}.\n\
+             var:vector:int 'v' = loop:var:int 'i' = math { 1 to N } {\n\
+                 if math { ('a') > 0 } { handback ('i'). }.\n\
+                 handback '0'.\n\
+             }.\n\
+             print[('v'):1;].",
+            "var:vector:int 'v' = loop:var:int 'i' = math { 1 to N } {\n\
+                 handback ('i').\n\
+             }.\n\
+             print[('v'):1;].",
+        ),
+    ];
+
+    for (what, leaky, control) in cases {
+        let used = peak_bytes(&build_only("budget_leaky", &leaky.replace("N", N)));
+        let baseline = peak_bytes(&build_only("budget_control", &control.replace("N", N)));
+        assert!(used > 0 && baseline > 0, "{what}: could not read peak memory");
+        assert!(
+            used < baseline + baseline / 2,
+            "{what}: used {used} bytes against a control of {baseline} for the same \
+             amount of collected data — the construct is holding on to something."
+        );
+    }
+}

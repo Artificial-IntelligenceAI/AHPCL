@@ -30,6 +30,11 @@ const E_SIGN_VIOLATION: Code = Code::new(Category::Sign, 1);
 const E_NO_VALUE: Code = Code::new(Category::Type, 5);
 const E_UNREACHABLE: Code = Code::new(Category::Syn, 2);
 const E_UNCLEAR_COPY: Code = Code::new(Category::Type, 6);
+/// A conditional used for its value that does not produce one on every path. Its own
+/// code, because it was previously reported as a widening mismatch and inherited that
+/// rule — so the message explained narrowing and widening to someone whose actual
+/// mistake was a missing `else`.
+const E_NO_VALUE_FROM_IF: Code = Code::new(Category::Type, 7);
 
 pub struct Checked {
     pub errors: Vec<Error>,
@@ -388,7 +393,7 @@ impl<'a> Checker<'a> {
 
         if expected.is_some() && (!all_produce || !has_else) {
             self.err(
-                E_MISMATCH,
+                E_NO_VALUE_FROM_IF,
                 chain.span,
                 if has_else {
                     "this conditional is used for its value, but not every branch hands one back."
@@ -729,13 +734,30 @@ impl<'a> Checker<'a> {
         // itself. So the two sides pin each other. Which means the side that *can*
         // decide has to go first: checking strictly left to right made `('i') > 5` work
         // and its mirror image `5 < ('i')` an error, for no reason a reader could see.
-        let bare_number =
-            |e: &Expr| matches!(&e.kind, ExprKind::Number(_) | ExprKind::Literal(_));
         let strip = |t: &Type| Type { sign: None, precision: None, ..t.clone() };
 
-        let (a, b) = if comparison && bare_number(lhs) && !bare_number(rhs) {
+        // Which side can decide a type on its own — anywhere inside it, not just at the
+        // top. `20 - ('a')` decides, because of the reference; `20 - 1` does not.
+        // Asking only about the outermost node meant `20 - ('a') = 15` was refused while
+        // `('a') - 1 = 4` and the same comparison written the other way round were fine,
+        // so the language accepted or rejected the same maths depending on which side it
+        // was written on.
+        // Applies to any operator with nothing to go on, not only comparisons: the
+        // operands of a comparison are themselves checked without a hint, so
+        // `20 - ('a') = 15` needs the inner subtraction to work this out too.
+        let no_hint = operand_expectation.is_none();
+        let (a, b) = if no_hint && !decides_type(lhs) && decides_type(rhs) {
             let b = self.expr(rhs, None);
             let a = self.expr(lhs, b.as_ref().map(strip).as_ref());
+            (a, b)
+        } else if no_hint && !decides_type(lhs) && !decides_type(rhs) {
+            // Neither side says anything, as in `math { 1 > 0 }`. Whole numbers are the
+            // only reading that works, and refusing it left the program unwritable: the
+            // suggested fix was to type the surrounding declaration, which is already
+            // `var:bool` and cannot help.
+            let whole = Type::scalar(Base::Int);
+            let a = self.expr(lhs, Some(&whole));
+            let b = self.expr(rhs, Some(&whole));
             (a, b)
         } else {
             let a = self.expr(lhs, operand_expectation);
@@ -1396,6 +1418,28 @@ fn shapes_agree(a: &Type, b: &Type) -> bool {
 }
 
 /// Whether an expression is a bare array reference — one with no selector.
+/// Whether an expression contains anything that fixes its own type.
+///
+/// A reference, a call, text, a constant like π, or a number written with a point. A
+/// plain whole number does not: `1` could be an `int`, a `deci` or a `rat` until
+/// something says which.
+fn decides_type(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ref { .. } | ExprKind::Call { .. } | ExprKind::Str(_) | ExprKind::Constant(_) => {
+            true
+        }
+        ExprKind::Builtin { .. } | ExprKind::ArrayLit(_) | ExprKind::Loop(_) | ExprKind::If(_) => {
+            true
+        }
+        ExprKind::Number(t) | ExprKind::Literal(t) => t.contains('.'),
+        ExprKind::Math(inner) => decides_type(inner),
+        ExprKind::Unary { operand, .. } => decides_type(operand),
+        ExprKind::Binary { lhs, rhs, .. } => decides_type(lhs) || decides_type(rhs),
+        ExprKind::Range { from, to, .. } => decides_type(from) || decides_type(to),
+        ExprKind::Option { .. } => false,
+    }
+}
+
 fn is_bare_ref(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Ref { selectors, .. } => selectors.is_empty(),

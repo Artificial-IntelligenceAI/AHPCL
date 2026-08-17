@@ -66,6 +66,17 @@ impl Parser {
 
     // ── token helpers ───────────────────────────────────────────────────────
 
+    /// The span of the token most recently consumed.
+    ///
+    /// Closing a construct's span with `peek()` instead reached into the token *after*
+    /// it, so every caret covered one token too many: the marker under `('nope')` also
+    /// underlined the string that followed it. The reported column was right; the
+    /// picture was not.
+    fn last_span(&self) -> Span {
+        let i = self.pos.saturating_sub(1).min(self.tokens.len() - 1);
+        self.tokens[i].span
+    }
+
     fn peek(&self) -> &Token {
         &self.tokens[self.pos.min(self.tokens.len() - 1)]
     }
@@ -189,14 +200,14 @@ impl Parser {
         if self.at_word("handback") || self.at_word("hb") {
             self.advance();
             let value = self.expression()?;
-            let span = start.to(self.peek().span);
+            let span = start.to(self.last_span());
             self.expect(TokenKind::Dot, "'.' to end the statement", "add a '.'.");
             return Some(Stmt::Handback { value, span });
         }
         if self.at_word("print") {
             self.advance();
             let args = self.print_args()?;
-            let span = start.to(self.peek().span);
+            let span = start.to(self.last_span());
             self.expect(TokenKind::Dot, "'.' to end the statement", "add a '.'.");
             return Some(Stmt::Print { args, span });
         }
@@ -225,7 +236,7 @@ impl Parser {
             break;
         }
 
-        let span = start.to(self.peek().span);
+        let span = start.to(self.last_span());
         self.expect(TokenKind::Dot, "'.' to end the declaration", "add a '.'.");
         Some(VarDecl { ty, bindings, span })
     }
@@ -272,7 +283,7 @@ impl Parser {
             }
         }
 
-        let span = start.to(self.peek().span);
+        let span = start.to(self.last_span());
         self.expect(TokenKind::Dot, "'.' to end the statement", "add a '.'.");
         Some(ChangeStmt { ty, targets, span })
     }
@@ -326,7 +337,7 @@ impl Parser {
         }
 
         let body = self.block()?;
-        let span = start.to(self.peek().span);
+        let span = start.to(self.last_span());
         self.expect(TokenKind::Dot, "'.' to end the function", "add a '.' after the '}'.");
         Some(FuncDecl { returns, name, name_span, params, body, span })
     }
@@ -364,7 +375,7 @@ impl Parser {
             }
         }
 
-        Some(IfChain { arms, span: start.to(self.peek().span) })
+        Some(IfChain { arms, span: start.to(self.last_span()) })
     }
 
     /// `loop:var:int 'i' = range { }` or `loop:while cond { }`.
@@ -399,7 +410,7 @@ impl Parser {
         };
 
         let body = self.block()?;
-        Some(LoopStmt { kind, body, span: start.to(self.peek().span) })
+        Some(LoopStmt { kind, body, span: start.to(self.last_span()) })
     }
 
     fn block(&mut self) -> Option<Block> {
@@ -494,7 +505,7 @@ impl Parser {
         };
 
         if !BASE_TYPES.contains(&base.as_str()) {
-            let span = start.to(self.peek().span);
+            let span = start.to(self.last_span());
             self.errors.push(Error::new(
                 E_BAD_TYPE,
                 span,
@@ -510,7 +521,7 @@ impl Parser {
             base,
             shape: None,
             precision: None,
-            span: start.to(self.peek().span),
+            span: start.to(self.last_span()),
         })
     }
 
@@ -777,7 +788,7 @@ impl Parser {
                 self.advance();
                 let operand = self.expression()?;
                 self.expect(close, "the closing bracket of the notation", "close it.");
-                let span = start.to(self.peek().span);
+                let span = start.to(self.last_span());
                 return Some(Expr {
                     kind: ExprKind::Unary { op, operand: Box::new(operand) },
                     span,
@@ -899,7 +910,7 @@ impl Parser {
                 self.advance(); // name
                 self.advance(); // )
                 let selectors = self.selectors();
-                let span = start.to(self.peek().span);
+                let span = start.to(self.last_span());
                 return Some(Expr { kind: ExprKind::Ref { name, selectors }, span });
             }
         }
@@ -907,7 +918,7 @@ impl Parser {
         let inner = self.expression()?;
         self.expect(TokenKind::RParen, "')' to close the group", "add a ')'.");
         let selectors = self.selectors();
-        let span = start.to(self.peek().span);
+        let span = start.to(self.last_span());
         if selectors.is_empty() {
             Some(inner)
         } else {
@@ -1048,7 +1059,7 @@ impl Parser {
             }
         }
         self.expect(TokenKind::RBrace, "'}' to close the array", "add a '}'.");
-        let span = start.to(self.peek().span);
+        let span = start.to(self.last_span());
         Some(Expr { kind: ExprKind::ArrayLit(items), span })
     }
 }

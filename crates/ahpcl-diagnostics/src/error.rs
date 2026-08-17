@@ -105,13 +105,27 @@ impl Error {
 /// Drop repeats of the same message at the same place.
 ///
 /// One mistake often trips several checks; showing it five times buries the cause.
-fn deduplicate(errors: &[Error]) -> Vec<&Error> {
+fn deduplicate<'a>(source: &SourceFile, errors: &'a [Error]) -> Vec<&'a Error> {
     let mut seen: Vec<(usize, u16, &str)> = Vec::new();
-    let mut out = Vec::new();
+    let mut out: Vec<&Error> = Vec::new();
     for e in errors {
         let key = (e.primary.start.0, e.code.number, e.what_went_wrong.as_str());
         if seen.contains(&key) {
             continue;
+        }
+        // One mistake, one report. A stray character or a malformed call produces a
+        // syntax error and then several more as the parser stumbles through the wreckage
+        // — six errors for one typo, of which only the first is real. A syntax error is
+        // kept only if nothing has already been reported on the same line, since after
+        // the first the parser is describing its own confusion rather than the program.
+        if e.code.category == Category::Syn {
+            let line = source.line_col(e.primary.start).line;
+            if out
+                .iter()
+                .any(|prior| source.line_col(prior.primary.start).line == line)
+            {
+                continue;
+            }
         }
         seen.push(key);
         out.push(e);
@@ -125,7 +139,7 @@ pub fn render(source: &SourceFile, errors: &[Error]) -> String {
         return String::new();
     }
 
-    let errors = deduplicate(errors);
+    let errors = deduplicate(source, errors);
     let errors = errors.as_slice();
 
     let mut out = String::new();
@@ -200,9 +214,13 @@ fn render_one(out: &mut String, source: &SourceFile, err: &Error, explain: bool)
         .max(2);
 
     for label in labels {
-        let pos = source.line_col(label.span.start);
+        let mut pos = source.line_col(label.span.start);
+        // An error at the very end of a file — an unclosed quote, a missing `.` — points
+        // just past the last line, and the source line was skipped entirely. Showing
+        // nothing is the worst case: the reader is told a line number that does not
+        // exist and given no text at all. Point at the last real line instead.
         if pos.line > source.line_count() {
-            continue;
+            pos.line = source.line_count().max(1);
         }
         let text = source.line_text(pos.line);
         let _ = writeln!(out, "{:>width$} | {}", pos.line, text, width = width + 3);
@@ -254,11 +272,13 @@ fn rule_conditions(code: Code) -> Option<&'static str> {
         (Type, 3) => "arithmetic applies to numbers. Text and truth values have their own                       operations.",
         (Type, 4) => "the type restated in `change:` is checked against the declaration,                       because documentation that can drift is worse than none.",
         (Type, 5) => "a declaration gives a value. Nothing can be read before it is written, so                       there is no unset state and no silent zero.",
+        (Type, 7) => "a conditional used for its value must hand one back on every path, \
+                      including the else — there is no value for a path that produces nothing.",
         (Type, 6) => "naming one array as another could copy it or share it, and AHPCL has no                       syntax for either. Where the program has not said which, the compiler                       does not choose.",
         (Type, 10) => "a type is one of the names the language defines.",
         (Prec, 1) => "a width must be knowable when the program is compiled. A value read from                       input is not, so its width is stated rather than inferred.",
         (Prec, 2) => "`infnum` is unbounded, so a bit width would contradict it. It takes                       digits instead.",
-        (Prec, 3) => "decimal widths follow IEEE 754: 16, 32, 64 or 128 bits.",
+        (Prec, 3) => "decimal widths follow IEEE 754: 32, 64 or 128 bits.",
         (Prec, 4) => "a value must fit the width it is given, and an irrational is computed                       only as far as AHPCL knows it. Overflow is an error, never a wrap, and                       excess precision is an error, never a silent approximation.",
         (Prec, 5) => "integer widths are 8, 16, 32, 64 or 128 bits.",
         (Prec, 10) => "precision is written `[N bit]` or `[N digits]`.",
@@ -268,7 +288,7 @@ fn rule_conditions(code: Code) -> Option<&'static str> {
         (Sign, 4) => "a `+` or `-` prefix holds at run time as well as compile time.",
         (Shape, 1) => "an operation between arrays needs shapes that agree, and the rule for                        agreeing is the operation's own.",
         (Shape, 2) => "the rank name and the written shape describe the same array, so they                        must say the same thing: `vector` one dimension, `matrix` two, `tensor`                        three or more.",
-        (Shape, 3) => "a literal's shape is the shape it is declared to have.",
+        (Shape, 3) => "a value's shape is the shape the variable receiving it was declared to have.",
         (Shape, 10) => "a shape is a list of dimensions, each a whole number or `?`.",
         (Name, 1) => "a name is declared before it is read, in a scope that is still open.",
         (Name, 2) => "a function is declared before it is called.",
