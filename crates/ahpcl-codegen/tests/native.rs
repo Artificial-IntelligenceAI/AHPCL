@@ -770,3 +770,105 @@ fn the_clock_compiles_and_advances() {
         "true"
     );
 }
+
+// ── declared widths govern storage ──────────────────────────────────────────
+//
+// docs/types.md defines `[n bit]` as a *storage* size. Arithmetic still happens at 128
+// bits and is checked against the declared width, so these tests come in two halves:
+// what shape was emitted, and whether it still computes the right answers.
+
+/// Compile only, handing back the LLVM IR.
+///
+/// A slot's width does not show up in what a program prints, so output tests cannot see
+/// it. This is the only way to tell a narrowed slot from a wide one that happens to hold
+/// a small number.
+fn compiled_ir(name: &str, src: &str) -> String {
+    let (program, errors) = parse_source(src);
+    assert!(errors.is_empty(), "should parse: {errors:#?}");
+    let object = workdir().join(format!("{name}.o"));
+    compile(&program, &object, name)
+        .unwrap_or_else(|u| panic!("should compile: {}", u.what))
+        .ir
+}
+
+#[test]
+fn a_declared_width_narrows_the_slot() {
+    for (bits, expected) in [(8, "i8"), (16, "i16"), (32, "i32"), (64, "i64"), (128, "i128")] {
+        let src = format!("var:int 'x' [{bits} bit] = '1'.\nprint[('x')].");
+        let ir = compiled_ir(&format!("slot{bits}"), &src);
+        assert!(
+            ir.contains(&format!("alloca {expected},")),
+            "[{bits} bit] should allocate {expected}, got:\n{ir}"
+        );
+    }
+}
+
+#[test]
+fn no_declared_width_keeps_the_widest_slot() {
+    // Sema infers a width here, but reports it to the Informer and drops it — the
+    // backend is handed the bare AST and never sees it. Until that changes, an
+    // unannotated integer stays 128-bit, which is safe rather than tight.
+    let ir = compiled_ir("slotdefault", "var:int 'x' = '1'.\nprint[('x')].");
+    assert!(ir.contains("alloca i128,"), "expected a 128-bit slot, got:\n{ir}");
+}
+
+#[test]
+fn a_narrow_slot_still_computes_the_right_answers() {
+    assert_eq!(
+        compile_and_run(
+            "narrow_math",
+            "var:int 'x' [32 bit] = '1000'.\n\
+             var:int 'y' [32 bit] = math { ('x') x 2 + 1 }.\n\
+             print[('y')].",
+        ),
+        "2001"
+    );
+}
+
+#[test]
+fn a_narrow_slot_survives_being_changed() {
+    // This is the case the differential oracle caught. The declaration made a 32-bit
+    // slot and `change:` stored 128 bits into it — which is *valid* IR under opaque
+    // pointers, so nothing complained; it wrote twelve bytes past the end of the slot
+    // and the program died on the way out of the loop.
+    assert_eq!(
+        compile_and_run(
+            "narrow_change",
+            "var:int 'n' [32 bit] = '3'.\n\
+             loop:while math { ('n') > 0 } {\n\
+                 change:var:int 'n' = math { ('n') - 1 }.\n\
+             }.\n\
+             print[('n')].",
+        ),
+        "0"
+    );
+}
+
+#[test]
+fn a_narrow_slot_holds_its_extremes() {
+    assert_eq!(
+        compile_and_run(
+            "narrow_edges",
+            "var:int 'hi' [32 bit] = '2147483647'.\n\
+             var:int 'lo' [32 bit] = '-2147483648'.\n\
+             var:int 'b' [8 bit] = '-128'.\n\
+             print[('hi')].\nprint[('lo')].\nprint[('b')].",
+        ),
+        "2147483647\n-2147483648\n-128"
+    );
+}
+
+#[test]
+fn a_narrow_slot_keeps_negatives_negative() {
+    // The load sign-extends. Zero-extending instead would turn every negative in a
+    // narrow slot into a large positive, and only on the compiled path.
+    assert_eq!(
+        compile_and_run(
+            "narrow_signs",
+            "var:int 'a' [16 bit] = '-1'.\n\
+             var:int 'b' [16 bit] = math { ('a') x 3 }.\n\
+             print[('b')].",
+        ),
+        "-3"
+    );
+}

@@ -109,6 +109,24 @@ significant digits, which is what financial systems actually use.
 
 `infnum [n bit]` is an **error** — it is unbounded by definition.
 
+### What governs storage today
+
+`[n bit]` narrows the **stack slot** of a scalar integer: `var:int 'x' [32 bit]` allocates
+`i32`, not `i128`. Arithmetic still happens at 128 bits and the result is checked back down
+to the declared width on every write, which is what keeps "overflow is an error, never a
+wrap" true without needing a wider type to compute in.
+
+Two parts are **not** done, and both are visible from a program:
+
+**Array elements are still 128-bit.** A `vector:int [32 bit]` holds `i128` elements, so the
+memory a large array occupies is four times what the declared width asks for. Narrowing it
+means new element-kind tags in the runtime.
+
+**Inferred widths never reach the backend.** `ahpcl_codegen::compile` receives the bare AST;
+sema works out a width by range analysis, reports it through the Informer as text, and drops
+it. So only a width written by hand can narrow — `var:int 'x' = '1000'` stays 128-bit, which
+is safe rather than tight. Closing this needs a real sema-to-codegen channel, not a tweak.
+
 ### `[n digits]` for irrationals — **DECIDED**
 
 `infnum` accepts a **digit** count, which is how much of an irrational value you want:

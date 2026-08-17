@@ -45,6 +45,7 @@ pub fn compile(program: &Program, object_path: &Path, module_name: &str) -> Resu
         vars: Vec::new(),
         functions: HashMap::new(),
         var_types: Vec::new(),
+        var_bits: Vec::new(),
         fn_repr: HashMap::new(),
         fn_params: HashMap::new(),
         current_ret: Native::None,
@@ -128,6 +129,15 @@ struct Codegen<'ctx, 'a> {
     /// What representation each variable holds, so `print` and arithmetic pick the
     /// right path.
     var_types: Vec<HashMap<String, Native>>,
+    /// The storage width, in bits, of each integer variable in scope.
+    ///
+    /// Beside `var_types` rather than inside `Native::Int`, deliberately. `Native` is
+    /// compared with `==` in dozens of places to ask "is this an integer?"; giving the
+    /// variant a payload would quietly turn every one of those into "is this a 128-bit
+    /// integer?" and change the answer. The width is a property of the *slot*, not of
+    /// the representation values are computed in — see docs/types.md, where `[n bit]`
+    /// is defined as storage size.
+    var_bits: Vec<HashMap<String, u32>>,
     fn_repr: HashMap<String, Native>,
     /// The declared representation of each parameter, so a call passes the right thing.
     /// Reading it back off the LLVM type cannot work: several representations share one
@@ -173,6 +183,71 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     /// about 9.2×10¹⁸: the interpreter kept computing and native overflowed.
     fn int_type(&self) -> inkwell::types::IntType<'ctx> {
         self.context.i128_type()
+    }
+
+    /// The machine type an integer *slot* of this width lives in.
+    ///
+    /// Spelled out rather than built from a width, because the documented set is exactly
+    /// 8, 16, 32, 64 and 128 — anything else is a checker bug, and falling back to the
+    /// widest is the safe way to be wrong.
+    fn int_type_of(&self, bits: u32) -> inkwell::types::IntType<'ctx> {
+        match bits {
+            8 => self.context.i8_type(),
+            16 => self.context.i16_type(),
+            32 => self.context.i32_type(),
+            64 => self.context.i64_type(),
+            _ => self.context.i128_type(),
+        }
+    }
+
+    /// Narrow a computed 128-bit integer down to the width its slot was declared with,
+    /// stopping the program if it does not fit.
+    ///
+    /// The check is a round trip: truncate, sign-extend back, and compare. If the two
+    /// differ, information was lost — which is overflow, and overflow is an error, never
+    /// a wrap (docs/types.md).
+    fn narrow_to_slot(
+        &mut self,
+        v: inkwell::values::IntValue<'ctx>,
+        bits: u32,
+        name: &str,
+    ) -> inkwell::values::IntValue<'ctx> {
+        if bits >= 128 {
+            return v;
+        }
+        let narrow = self
+            .builder
+            .build_int_truncate(v, self.int_type_of(bits), "nrw")
+            .unwrap();
+        let back = self
+            .builder
+            .build_int_s_extend(narrow, self.int_type(), "nrw.wide")
+            .unwrap();
+        let fits = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, back, v, "nrw.fits")
+            .unwrap();
+
+        let function = self.current.expect("inside a function");
+        let bad = self.context.append_basic_block(function, "nrw.bad");
+        let ok = self.context.append_basic_block(function, "nrw.ok");
+        self.builder.build_conditional_branch(fits, ok, bad).unwrap();
+        self.builder.position_at_end(bad);
+        self.fail(
+            "AHPCL-PREC-0004",
+            &format!("this value does not fit the [{bits} bit] width '{name}' was given"),
+        );
+        self.builder.position_at_end(ok);
+        narrow
+    }
+
+    /// The storage width recorded for a variable, or 128 when none was written.
+    fn slot_bits(&self, name: &str) -> u32 {
+        self.var_bits
+            .iter()
+            .rev()
+            .find_map(|f| f.get(name).copied())
+            .unwrap_or(128)
     }
 
     fn bool_type(&self) -> inkwell::types::IntType<'ctx> {
@@ -778,6 +853,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.current_ret = native_base(&f.returns)?;
         self.vars.push(HashMap::new());
         self.var_types.push(HashMap::new());
+        self.var_bits.push(HashMap::new());
 
         for (i, p) in f.params.iter().enumerate() {
             let arg = function.get_nth_param(i as u32).expect("a parameter");
@@ -810,6 +886,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         // holding them is released like any other.
         self.vars.push(HashMap::new());
         self.var_types.push(HashMap::new());
+        self.var_bits.push(HashMap::new());
         let outer_owned = self.owned_from;
         self.owned_from = self.vars.len() - 2;
 
@@ -853,8 +930,10 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.owned_from = outer_owned;
         self.vars.pop();
         self.var_types.pop();
+        self.var_bits.pop();
         self.vars.pop();
         self.var_types.pop();
+        self.var_bits.pop();
         self.current = None;
         Ok(())
     }
@@ -867,6 +946,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
         self.current = Some(function);
         self.vars.push(HashMap::new());
         self.var_types.push(HashMap::new());
+        self.var_bits.push(HashMap::new());
 
         let top: Vec<Stmt> = program
             .statements
@@ -884,6 +964,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
 
         self.vars.pop();
         self.var_types.pop();
+        self.var_bits.pop();
         self.current = None;
         Ok(())
     }
@@ -977,10 +1058,12 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
     fn scoped(&mut self, stmts: &[Stmt]) -> Result<bool, Unsupported> {
         self.vars.push(HashMap::new());
         self.var_types.push(HashMap::new());
+        self.var_bits.push(HashMap::new());
         let out = self.block(stmts);
         self.release_scope();
         self.vars.pop();
         self.var_types.pop();
+        self.var_bits.pop();
         out
     }
 
@@ -1095,14 +1178,29 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         b.name,
                         val.get_type()
                     );
-                    let slot = self.alloca(&b.name, want);
+                    // `[n bit]` is a storage size (docs/types.md), so the slot narrows
+                    // while arithmetic stays 128-bit and checked. Only a width written
+                    // by hand can narrow: sema infers widths too, but reports them to
+                    // the Informer as text and drops them, so they never reach here.
+                    let bits = declared_int_bits(
+                        native,
+                        b.precision.as_ref().or(v.ty.precision.as_ref()),
+                    );
+                    let (slot_ty, stored) = if bits < 128 {
+                        let narrow = self.narrow_to_slot(val.into_int_value(), bits, &b.name);
+                        (self.int_type_of(bits).into(), narrow.into())
+                    } else {
+                        (want, val)
+                    };
+                    let slot = self.alloca(&b.name, slot_ty);
                     if native.is_counted() {
                         let handle = self.counted_handle(val, native);
                         self.call_runtime(native.retain_fn(), &[handle.into()]);
                     }
-                    self.builder.build_store(slot, val).unwrap();
+                    self.builder.build_store(slot, stored).unwrap();
                     self.vars.last_mut().unwrap().insert(b.name.clone(), slot);
                     self.var_types.last_mut().unwrap().insert(b.name.clone(), native);
+                    self.var_bits.last_mut().unwrap().insert(b.name.clone(), bits);
                     self.digits = DEFAULT_DIGITS;
                 }
                 Ok(false)
@@ -1184,7 +1282,19 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                         self.builder.build_store(slot, val).unwrap();
                         self.call_runtime(held.release_fn(), &[old_handle.into()]);
                     } else {
-                        self.builder.build_store(slot, val).unwrap();
+                        // The slot may be narrower than the width arithmetic happens in,
+                        // so the value is checked and truncated on the way in — the same
+                        // as at the declaration. Storing the wide value straight in is
+                        // *valid* IR under opaque pointers, so nothing would complain; it
+                        // would simply write past the end of the slot.
+                        let bits = self.slot_bits(&target.name);
+                        let stored: BasicValueEnum<'ctx> = if held == Native::Int && bits < 128 {
+                            self.narrow_to_slot(val.into_int_value(), bits, &target.name)
+                                .into()
+                        } else {
+                            val
+                        };
+                        self.builder.build_store(slot, stored).unwrap();
                     }
                 }
                 Ok(false)
@@ -1610,6 +1720,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 // enclosing scope.
                 self.vars.push(HashMap::new());
                 self.var_types.push(HashMap::new());
+                self.var_bits.push(HashMap::new());
                 self.vars.last_mut().unwrap().insert(var.clone(), slot);
                 self.var_types.last_mut().unwrap().insert(var.clone(), Native::Int);
                 self.continues.push(step_bb);
@@ -1622,6 +1733,7 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                 self.release_scope();
                 self.vars.pop();
                 self.var_types.pop();
+                self.var_bits.pop();
                 if !terminated? {
                     self.builder.build_unconditional_branch(step_bb).unwrap();
                 }
@@ -1718,10 +1830,24 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     .rev()
                     .find_map(|f| f.get(name).copied())
                     .unwrap_or(want);
-                let loaded = self
-                    .builder
-                    .build_load(self.repr_type(held), slot, name)
-                    .unwrap();
+                let bits = self.slot_bits(name);
+                let loaded = if held == Native::Int && bits < 128 {
+                    // Sign-extend on the way out, so everything downstream keeps seeing
+                    // one integer representation.
+                    let narrow = self
+                        .builder
+                        .build_load(self.int_type_of(bits), slot, name)
+                        .unwrap()
+                        .into_int_value();
+                    self.builder
+                        .build_int_s_extend(narrow, self.int_type(), "slot.wide")
+                        .unwrap()
+                        .into()
+                } else {
+                    self.builder
+                        .build_load(self.repr_type(held), slot, name)
+                        .unwrap()
+                };
                 if held.is_array() {
                     let out =
                         self.array_selectors(loaded, selectors, held.element(), want, held.rank())?;
@@ -3151,6 +3277,17 @@ fn digits_for(ty: &TypeRef, precision: Option<&Precision>) -> u32 {
 }
 
 /// Which native representation a declared type maps onto, if any.
+/// The storage width an integer declaration asks for.
+///
+/// Only `int` narrows. A decimal's `[n bit]` picks an IEEE decimal format, which
+/// `digits_for` handles, and `infnum` rejects widths outright.
+fn declared_int_bits(native: Native, precision: Option<&Precision>) -> u32 {
+    match (native, precision) {
+        (Native::Int, Some(Precision::Bits(n))) if *n < 128 => *n,
+        _ => 128,
+    }
+}
+
 fn native_base(ty: &TypeRef) -> Result<Native, Unsupported> {
     native_base_shaped(ty, None)
 }

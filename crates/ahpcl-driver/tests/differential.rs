@@ -239,6 +239,28 @@ const CASES: &[(&str, &str)] = &[
          print[('b')].\nprint[('d')].\nprint[('e')].\nprint[('m')].",
     ),
     (
+        // `[n bit]` is a storage size, so a narrow slot round-trips through truncate
+        // and sign-extend on every read and write. Zero-extending instead would turn
+        // every negative into a large positive, and only on the compiled path — which
+        // is exactly the shape of divergence this test exists to find.
+        "narrow_widths",
+        "var:int 'a' [8 bit] = '-128'.\n\
+         var:int 'b' [16 bit] = '-32768'.\n\
+         var:int 'c' [32 bit] = '2147483647'.\n\
+         var:int 'd' [64 bit] = '-9223372036854775808'.\n\
+         print[('a')].\nprint[('b')].\nprint[('c')].\nprint[('d')].",
+    ),
+    (
+        // Arithmetic happens at 128 bits and the result is checked back down, so a
+        // narrow variable driven repeatedly has to agree at every step.
+        "narrow_arithmetic",
+        "var:int 'n' [16 bit] = '100'.\n\
+         loop:var:int 'i' = math { 1 to 5 } {\n\
+             change:var:int 'n' = math { ('n') - 7 }.\n\
+         }.\n\
+         print[('n')].",
+    ),
+    (
         // The last three gaps the backend used to decline outright.
         "nna_text_arrays",
         "var:nna 'names' = {\"hello\", \"John Doe\", \"Lol😂\"}.\n\
