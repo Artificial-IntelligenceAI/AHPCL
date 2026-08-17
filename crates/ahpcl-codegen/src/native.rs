@@ -4,7 +4,7 @@
 //! `print` becomes a `printf` call — so the produced object links against libc with no
 //! AHPCL runtime library needed yet.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use ahpcl_syntax::ast::*;
@@ -33,7 +33,24 @@ pub struct Compiled {
 }
 
 /// Compile a program to an object file at `object_path`, returning the IR.
+/// Compile with no inferred widths — every unannotated integer keeps the widest slot.
+///
+/// Kept so a caller that has not run verification (the codegen tests, which parse and
+/// compile directly) does not have to invent a table.
 pub fn compile(program: &Program, object_path: &Path, module_name: &str) -> Result<Compiled, Unsupported> {
+    compile_with_widths(program, &BTreeMap::new(), object_path, module_name)
+}
+
+/// Compile, narrowing integers whose width range analysis *proved*.
+///
+/// The widths are keyed by the byte offset of the declared name, which is how a fact
+/// worked out in `ahpcl-sema` reaches a backend that is otherwise handed the bare AST.
+pub fn compile_with_widths(
+    program: &Program,
+    inferred_bits: &BTreeMap<usize, u32>,
+    object_path: &Path,
+    module_name: &str,
+) -> Result<Compiled, Unsupported> {
     let context = Context::create();
     let module = context.create_module(module_name);
     let builder = context.create_builder();
@@ -46,6 +63,7 @@ pub fn compile(program: &Program, object_path: &Path, module_name: &str) -> Resu
         functions: HashMap::new(),
         var_types: Vec::new(),
         var_bits: Vec::new(),
+        inferred_bits,
         fn_repr: HashMap::new(),
         fn_params: HashMap::new(),
         current_ret: Native::None,
@@ -138,6 +156,9 @@ struct Codegen<'ctx, 'a> {
     /// the representation values are computed in — see docs/types.md, where `[n bit]`
     /// is defined as storage size.
     var_bits: Vec<HashMap<String, u32>>,
+    /// Widths proved by range analysis, keyed by the byte offset of the declared name.
+    /// Consulted only where no width was written by hand.
+    inferred_bits: &'ctx BTreeMap<usize, u32>,
     fn_repr: HashMap<String, Native>,
     /// The declared representation of each parameter, so a call passes the right thing.
     /// Reading it back off the LLVM type cannot work: several representations share one
@@ -1182,10 +1203,21 @@ impl<'ctx, 'a> Codegen<'ctx, 'a> {
                     // while arithmetic stays 128-bit and checked. Only a width written
                     // by hand can narrow: sema infers widths too, but reports them to
                     // the Informer as text and drops them, so they never reach here.
-                    let bits = declared_int_bits(
-                        native,
-                        b.precision.as_ref().or(v.ty.precision.as_ref()),
-                    );
+                    let written = b.precision.as_ref().or(v.ty.precision.as_ref());
+                    let bits = match written {
+                        Some(_) => declared_int_bits(native, written),
+                        // Nothing written: fall back to what range analysis proved. Its
+                        // table holds only proved widths — the `defaulting to [64 bit]`
+                        // case is deliberately absent, since narrowing on a fallback
+                        // rather than a proof is the old 64-versus-128 divergence.
+                        None if native == Native::Int => self
+                            .inferred_bits
+                            .get(&b.name_span.start.0)
+                            .copied()
+                            .filter(|n| *n < 128)
+                            .unwrap_or(128),
+                        None => 128,
+                    };
                     let (slot_ty, stored) = if bits < 128 {
                         let narrow = self.narrow_to_slot(val.into_int_value(), bits, &b.name);
                         (self.int_type_of(bits).into(), narrow.into())

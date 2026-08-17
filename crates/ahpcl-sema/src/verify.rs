@@ -17,6 +17,8 @@
 //!
 //! See docs/types.md.
 
+use std::collections::BTreeMap;
+
 use ahpcl_diagnostics::{Category, Code, Error, Informer, Span};
 use ahpcl_eval::{Interpreter, Value};
 use ahpcl_syntax::ast::*;
@@ -42,6 +44,14 @@ pub struct Verified {
     pub errors: Vec<Error>,
     /// Places where layer 3 inserted a check.
     pub runtime_checks: Vec<Span>,
+    /// Widths worked out by range analysis, keyed by the start of the declared name.
+    ///
+    /// The backend is handed the bare AST, so a width it did not read off the source has
+    /// no way to reach it. This is that channel. Only widths *proved* from a range go in:
+    /// the `defaulting to [64 bit]` case is a fallback, not a proof, and narrowing on it
+    /// would make the compiled path 64-bit while the interpreter stays exact — which is
+    /// the divergence `int_type` in the backend carries a comment about.
+    pub inferred_bits: BTreeMap<usize, u32>,
 }
 
 /// How much compile-time evaluation is allowed.
@@ -65,6 +75,7 @@ pub fn verify(program: &Program, informer: &mut Informer, budget: EvalBudget) ->
     let mut v = Verifier {
         errors: Vec::new(),
         runtime_checks: Vec::new(),
+        inferred_bits: BTreeMap::new(),
         informer,
         budget,
         program,
@@ -82,12 +93,18 @@ pub fn verify(program: &Program, informer: &mut Informer, budget: EvalBudget) ->
 
     let mut state = State::default();
     v.block(&program.statements, &mut state);
-    Verified { errors: v.errors, runtime_checks: v.runtime_checks }
+    Verified {
+        errors: v.errors,
+        runtime_checks: v.runtime_checks,
+        inferred_bits: v.inferred_bits,
+    }
 }
 
 struct Verifier<'a> {
     errors: Vec<Error>,
     runtime_checks: Vec<Span>,
+    /// See `Verified::inferred_bits`.
+    inferred_bits: BTreeMap<usize, u32>,
     informer: &'a mut Informer,
     budget: EvalBudget,
     program: &'a Program,
@@ -517,14 +534,20 @@ impl<'a> Verifier<'a> {
             (Some(lo), Some(hi)) => {
                 let bits = smallest_width(lo, hi, ty.sign);
                 match bits {
-                    Some(b) => self.informer.say(
-                        binding.name_span.start,
-                        format!(
-                            "'{}' inferred as [{b} bit] from its range {}",
-                            binding.name,
-                            range.render()
-                        ),
-                    ),
+                    Some(b) => {
+                        // Recorded on the same path as the report, so a width reaches the
+                        // backend exactly when it was proved and announced — not during
+                        // the fixed-point rounds, which are still moving.
+                        self.inferred_bits.insert(binding.name_span.start.0, b);
+                        self.informer.say(
+                            binding.name_span.start,
+                            format!(
+                                "'{}' inferred as [{b} bit] from its range {}",
+                                binding.name,
+                                range.render()
+                            ),
+                        )
+                    }
                     None => self.errors.push(Error::new(
                         E_OVERFLOW,
                         binding.name_span,
@@ -756,5 +779,61 @@ mod tests {
              change:var:+int 'n' = math { 0 - 5 }.",
         );
         assert!(errors.contains(&"AHPCL-SIGN-0003".to_string()), "{errors:?}");
+    }
+}
+
+#[cfg(test)]
+mod inferred_width_channel {
+    use super::*;
+    use ahpcl_syntax::parse_source;
+
+    fn widths(src: &str) -> BTreeMap<usize, u32> {
+        let (program, errors) = parse_source(src);
+        assert!(errors.is_empty(), "should parse: {errors:#?}");
+        let mut informer = Informer::default();
+        verify(&program, &mut informer, EvalBudget::Unlimited).inferred_bits
+    }
+
+    /// A width proved from a range reaches the backend.
+    #[test]
+    fn a_proved_width_is_handed_over() {
+        let table = widths("var:int 'x' = '1000'.\nprint[('x')].");
+        assert_eq!(table.values().copied().collect::<Vec<_>>(), vec![16]);
+    }
+
+    #[test]
+    fn a_wider_range_gives_a_wider_width() {
+        let table = widths("var:int 'x' = '100000'.\nprint[('x')].");
+        assert_eq!(table.values().copied().collect::<Vec<_>>(), vec![32]);
+    }
+
+    /// The guard that matters most in this whole change.
+    ///
+    /// `'x' has no statically known range; defaulting to [64 bit]` is a *fallback*, not a
+    /// proof. Handing that width to the backend would make the compiled path 64-bit while
+    /// the interpreter stays exact — which is the divergence `int_type` in the backend
+    /// carries a comment about, and which cost real debugging once already.
+    #[test]
+    fn a_defaulted_width_is_never_handed_over() {
+        // A function call's range is not tracked, so this takes the fallback path.
+        let table = widths(
+            "func:int 'twice' [var:int 'n' [32 bit]] {\n\
+                 handback math { ('n') x 2 }.\n\
+             }.\n\
+             var:int 'x' = 'twice'['21'].\n\
+             print[('x')].",
+        );
+        assert!(
+            table.is_empty(),
+            "a defaulted width must not reach the backend, got {table:?}"
+        );
+    }
+
+    /// A width written by hand is the source's business, not the analysis's — the
+    /// backend reads it off the AST directly and the table stays out of it.
+    #[test]
+    fn a_written_width_is_not_in_the_table() {
+        let table = widths("var:int 'x' [32 bit] = '1000'.\nprint[('x')].");
+        assert!(table.is_empty(), "expected nothing, got {table:?}");
     }
 }

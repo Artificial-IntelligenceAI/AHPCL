@@ -15,4 +15,4 @@
 
 mod native;
 
-pub use native::{compile, Compiled, Unsupported};
+pub use native::{compile, compile_with_widths, Compiled, Unsupported};

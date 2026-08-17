@@ -130,16 +130,23 @@ reference counting with them. That is a rewrite of the array core rather than an
 it — and it is where the real memory win lives, since an array of 32-bit integers currently
 costs sixteen times what it asks for.
 
-**Inferred widths never reach the backend, and handing them over is worth less than it
-looks.** `ahpcl_codegen::compile` receives the bare AST; sema works out a width by range
-analysis, reports it through the Informer as text, then drops it. The plumbing itself is
-cheap — `verify` could write the inferred `Precision` back onto the binding, and codegen
-already reads that field. But what it would narrow is *stack slots*, which LLVM promotes into
-registers regardless, so it buys close to nothing until array elements narrow first. It also
-carries a trap: `'x' has no statically known range; defaulting to [64 bit]` is a fallback,
-not a proof. Writing that width back would make the compiled path 64-bit while the
-interpreter stays exact — reintroducing precisely the divergence `int_type` carries a comment
-about.
+**Inferred widths now reach the backend.** `verify` records every width it *proves* from a
+range in `Verified::inferred_bits`, keyed by the byte offset of the declared name; the driver
+carries it on the `Report` and `compile_with_widths` consults it wherever no width was written
+by hand. `compile` remains as a thin wrapper passing an empty table, for callers that never
+ran verification.
+
+Only *proved* widths cross. `'x' has no statically known range; defaulting to [64 bit]` is a
+fallback, and handing that over would make the compiled path 64-bit while the interpreter
+stays exact — the divergence `int_type` carries a comment about. A test enforces the
+distinction rather than trusting the comment.
+
+**On its own this changes almost nothing, for a structural reason worth writing down.** An
+inferred width exists exactly where range analysis can prove a range — and where it can prove
+a range, the constant folder can usually evaluate the value outright, so there is no slot left
+to narrow. `var:int 'x' = '1000'.` is inferred as `[16 bit]` and then folded away entirely.
+The channel is therefore groundwork: it is what lets a *declared or inferred* element width
+reach an unboxed array once arrays stop boxing, and it is worth little before then.
 
 ### `[n digits]` for irrationals — **DECIDED**
 

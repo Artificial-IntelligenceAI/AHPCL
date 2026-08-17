@@ -17,6 +17,8 @@ pub struct Report {
     pub errors: Vec<Error>,
     pub informer: Informer,
     pub program: Program,
+    /// Widths range analysis proved, for the backend. See `Verified::inferred_bits`.
+    pub inferred_bits: std::collections::BTreeMap<usize, u32>,
 }
 
 impl Report {
@@ -50,6 +52,9 @@ pub fn check_with(
     let source = SourceFile::new(name, text);
     let mut informer = Informer::new();
     let mut errors = Vec::new();
+    // Empty unless verification runs and proves something — a program that does not
+    // type-check never gets that far, and every integer keeps the widest slot.
+    let mut inferred_bits = std::collections::BTreeMap::new();
 
     let started = Instant::now();
     let lexed = lex(&source.text);
@@ -90,6 +95,7 @@ pub fn check_with(
         if errors.is_empty() {
             let started = Instant::now();
             let verified = verify(&parsed.program, &mut informer, budget);
+            inferred_bits = verified.inferred_bits.clone();
             let verify_time = started.elapsed();
             let checks = verified.runtime_checks.len();
             errors.extend(verified.errors);
@@ -101,7 +107,7 @@ pub fn check_with(
         }
     }
 
-    Report { source, errors, informer, program: parsed.program }
+    Report { source, errors, informer, program: parsed.program, inferred_bits }
 }
 
 /// The result of running a program.
@@ -186,7 +192,12 @@ pub fn build_program(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "ahpcl".to_string());
 
-    let compiled = match ahpcl_codegen::compile(&report.program, &object, &name) {
+    let compiled = match ahpcl_codegen::compile_with_widths(
+        &report.program,
+        &report.inferred_bits,
+        &object,
+        &name,
+    ) {
         Ok(c) => c,
         Err(u) => return Ok(Built::NotYetNative { what: u.what }),
     };
