@@ -1264,3 +1264,25 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod element_size {
+    use super::*;
+
+    /// What one array element actually costs.
+    ///
+    /// Recorded because it decides whether narrowing `[n bit]` can shrink an array at
+    /// all: elements are `Cell`, a Rust enum, so every element is as large as the
+    /// *widest* variant plus its tag whatever it holds. Changing `Cell::Int(i128)` to a
+    /// narrower integer would therefore save nothing.
+    #[test]
+    fn an_element_is_as_big_as_the_widest_variant() {
+        let cell = std::mem::size_of::<Cell>();
+        println!("Cell = {cell} bytes, i128 = {}, i32 = {}",
+                 std::mem::size_of::<i128>(), std::mem::size_of::<i32>());
+        assert!(
+            cell >= std::mem::size_of::<AhpclRational>(),
+            "a Cell should be at least as large as its widest variant"
+        );
+    }
+}

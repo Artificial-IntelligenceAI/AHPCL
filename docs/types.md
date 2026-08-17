@@ -116,16 +116,30 @@ significant digits, which is what financial systems actually use.
 to the declared width on every write, which is what keeps "overflow is an error, never a
 wrap" true without needing a wider type to compute in.
 
-Two parts are **not** done, and both are visible from a program:
+Two parts are **not** done. Both were first written down here as small jobs; measuring them
+says otherwise, so the corrected scope is recorded instead.
 
-**Array elements are still 128-bit.** A `vector:int [32 bit]` holds `i128` elements, so the
-memory a large array occupies is four times what the declared width asks for. Narrowing it
-means new element-kind tags in the runtime.
+**Array elements ignore the declared width, and element-kind tags would not fix it.** An
+element is a `Cell`, a Rust enum, so it occupies its widest variant plus a tag whatever it
+actually holds — **64 bytes, measured** (`array.rs`, `element_size`), where a `[32 bit]`
+integer needs 4. Turning `Cell::Int(i128)` into a narrower integer saves *nothing*, because
+the 64 comes from `Cell::Rat` and the 16-byte alignment of `i128`, not from the integer.
+Reaching the declared width means giving up `Vec<Cell>` for an unboxed representation
+specialised per element type, which touches every selector, push and offset path, and the
+reference counting with them. That is a rewrite of the array core rather than an addition to
+it — and it is where the real memory win lives, since an array of 32-bit integers currently
+costs sixteen times what it asks for.
 
-**Inferred widths never reach the backend.** `ahpcl_codegen::compile` receives the bare AST;
-sema works out a width by range analysis, reports it through the Informer as text, and drops
-it. So only a width written by hand can narrow — `var:int 'x' = '1000'` stays 128-bit, which
-is safe rather than tight. Closing this needs a real sema-to-codegen channel, not a tweak.
+**Inferred widths never reach the backend, and handing them over is worth less than it
+looks.** `ahpcl_codegen::compile` receives the bare AST; sema works out a width by range
+analysis, reports it through the Informer as text, then drops it. The plumbing itself is
+cheap — `verify` could write the inferred `Precision` back onto the binding, and codegen
+already reads that field. But what it would narrow is *stack slots*, which LLVM promotes into
+registers regardless, so it buys close to nothing until array elements narrow first. It also
+carries a trap: `'x' has no statically known range; defaulting to [64 bit]` is a fallback,
+not a proof. Writing that width back would make the compiled path 64-bit while the
+interpreter stays exact — reintroducing precisely the divergence `int_type` carries a comment
+about.
 
 ### `[n digits]` for irrationals — **DECIDED**
 
