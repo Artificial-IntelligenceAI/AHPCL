@@ -1,5 +1,33 @@
 # AHPCL
 
+
+> ## Abandoned
+>
+> AHPCL is no longer being developed. It works, and the bugs below are real and will not be
+> fixed. Read it as a finished artefact, not a maintained project.
+>
+> **Known bugs, all in the Informer — the results are correct, the explanations are not:**
+>
+> | it says | it does |
+> |---|---|
+> | `rounded to the declared decimal precision` | truncates, and at the engine's ceiling rather than the declared precision |
+> | an explicit `[N digits]` past the limit *"is caught by the checker"* (comment in `eval.rs`) | `[100 digits]` compiles clean and silently yields 18 |
+> | `defaulting to [64 bit]` | uses 128 bits — and an explicit `[64 bit]` is *rejected* with `AHPCL-PREC-0004` |
+>
+> `sqrt` truncates rather than rounds: `sqrt 2` at 18 digits gives `…095048`, correctly rounded
+> is `…095049`. Truncation is biased toward zero, so error accumulates in one direction.
+>
+> A syntax error on `10x5` (the `x` operator needs whitespace) reports *"expected `}` to close the
+> math block"* and suggests adding one. The brace is already there; following the advice makes it
+> worse.
+>
+> The cause is one thing wearing three hats: **the Informer was a second implementation of the
+> compiler's decisions.** One path computed, another narrated from hardcoded strings, and the
+> narrator drifted because every test asserted on results — which were right every time.
+>
+> Successor: [QuiPaw](https://github.com/Artificial-IntelligenceAI/QuiPaws), where
+> `docs/errors.md` carries the rules this taught.
+
 **Advanced High-Performance Calculations Language**
 
 A programming language, built from scratch — one where numbers are taken seriously.
